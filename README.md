@@ -19,11 +19,22 @@ JSON is available at `/api/assets`, `/api/fields`, `/api/summary` and `/api/atte
 
 ## Running it
 
+Linux / macOS:
+
 ```
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 cp example.env .env
 .venv/bin/python app.py
+```
+
+Windows (PowerShell):
+
+```
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+copy example.env .env
+.venv\Scripts\python app.py
 ```
 
 Then open http://localhost:5070.

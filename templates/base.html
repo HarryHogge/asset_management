@@ -283,7 +283,7 @@
 
     <div class="content">
         <p class="source-note">
-            Data from <strong>{{ source }}</strong>, exported {{ loaded_at.strftime('%-m/%-d/%Y %-I:%M %p') }}.
+            Data from <strong>{{ source }}</strong>, exported {{ loaded_at | mdy_time }}.
             Times and dates are in the SharePoint site's time zone.
         </p>
         {% block content %}{% endblock %}

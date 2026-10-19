@@ -52,6 +52,17 @@ def mdy(value):
     return '%d/%d/%d' % (value.month, value.day, value.year) if value else ''
 
 
+@app.template_filter('mdy_time')
+def mdy_time(value):
+    # Built by hand rather than with strftime's %-m/%-I: those no-leading-zero
+    # flags don't exist on Windows and raise ValueError there.
+    if not value:
+        return ''
+    hour = value.hour % 12 or 12
+    return '%s %d:%02d %s' % (mdy(value), hour, value.minute,
+                              'AM' if value.hour < 12 else 'PM')
+
+
 def render(template, active, **kwargs):
     data = load()
     return render_template(
