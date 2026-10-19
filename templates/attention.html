@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import asset_table %}
+{% block title %}Needs Attention{% endblock %}
+{% block subtitle %}Needs Attention{% endblock %}
+
+{% block head %}
+<style>
+    .jump {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 20px;
+    }
+    .jump a {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: var(--surface);
+        text-decoration: none;
+        font-size: 13px;
+        color: var(--text-2);
+    }
+    .jump a:hover { border-color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="jump">
+    {% for g in groups %}
+    <a href="#{{ g.key }}">{{ g.title }} <span class="count-badge {{ 'zero' if not g.assets else '' }}">{{ g.assets | length }}</span></a>
+    {% endfor %}
+</div>
+
+{% for g in groups %}
+<div class="card" id="{{ g.key }}">
+    <h2 class="card-title">{{ g.title }} <span class="count-badge {{ 'zero' if not g.assets else '' }}">{{ g.assets | length }}</span></h2>
+    <p class="card-sub">{{ g.why }}</p>
+    {% if g.assets %}
+    {{ asset_table(fields, g.assets) }}
+    {% else %}
+    <div class="empty">Nothing to fix here.</div>
+    {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

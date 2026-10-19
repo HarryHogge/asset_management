@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import pill, pills %}
+{% block title %}Checkouts{% endblock %}
+{% block subtitle %}Checkouts{% endblock %}
+
+{% block head %}
+<style>
+    .holders {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+    .holder {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px 16px;
+    }
+    .holder .who {
+        font-size: 13px;
+        font-weight: 600;
+        word-break: break-all;
+    }
+    .holder .n {
+        font-size: 28px;
+        font-weight: 700;
+        line-height: 1.1;
+        margin-top: 6px;
+    }
+    .holder .what {
+        font-size: 12px;
+        color: var(--muted);
+    }
+    .days-long { color: var(--warn); font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="holders">
+    {% for who, items in holders %}
+    <div class="holder">
+        <div class="who {{ 'muted' if who == '(nobody listed)' else '' }}">{{ who }}</div>
+        <div class="n">{{ items | length }}</div>
+        <div class="what">{{ items | map(attribute='asset_type') | unique | join(', ') }}</div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <h2 class="card-title">Out right now <span class="count-badge">{{ rows | length }}</span></h2>
+    <p class="card-sub">Items marked OUT or checked out to someone, longest out first.</p>
+    {% if rows %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Check Out By/To</th>
+                <th>Asset Type</th>
+                <th>Serial Number</th>
+                <th>Status</th>
+                <th>Location</th>
+                <th>Condition</th>
+                <th>Date Out</th>
+                <th class="num">Days Out</th>
+                <th>Asset Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in rows %}
+            <tr>
+                <td>{{ a.checked_out_to or '' }}{% if not a.checked_out_to %}<span class="muted">(nobody listed)</span>{% endif %}</td>
+                <td>{{ pill(fields, 'asset_type', a.asset_type) }}</td>
+                <td class="serial">{{ a.serial_number }}</td>
+                <td>{{ pills(fields, 'status', a.status) }}</td>
+                <td>{{ pills(fields, 'location', a.location) }}</td>
+                <td>{{ pill(fields, 'condition', a.condition) }}</td>
+                <td>{{ a.date_out | mdy }}</td>
+                <td class="num {{ 'days-long' if a.days_out is not none and a.days_out > 30 else '' }}">{{ a.days_out if a.days_out is not none else '' }}</td>
+                <td class="notes">{{ a.notes }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty">Nothing is checked out.</div>
+    {% endif %}
+</div>
+{% endblock %}

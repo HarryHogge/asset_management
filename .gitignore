@@ -1,0 +1,10 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Raw SharePoint exports contain colleagues' names and emails; keep new ones
+# out of git. (Asset Tracking V2.csv was committed before this rule existed.)
+exports/
+*.xlsx

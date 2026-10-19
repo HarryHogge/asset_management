@@ -1,0 +1,55 @@
+{# A value rendered as the same colored pill SharePoint shows for it. #}
+{% macro pill(fields, key, value) -%}
+{%- if value -%}
+{%- set style = fields.get(key, {}).get('colors', {}).get(value) -%}
+{%- if style -%}
+<span class="pill" style="background: {{ style.bg }}; color: {{ style.fg }};">{{ value }}</span>
+{%- else -%}
+<span class="pill plain">{{ value }}</span>
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro pills(fields, key, values) -%}
+{%- for v in values %}{{ pill(fields, key, v) }}{% endfor -%}
+{%- endmacro %}
+
+{# The compact asset table used on the attention page. #}
+{% macro asset_table(fields, assets) -%}
+<div class="table-wrap">
+<table>
+    <thead>
+        <tr>
+            <th>Asset Type</th>
+            <th>Serial Number</th>
+            <th>Ownership</th>
+            <th>Status</th>
+            <th>Location</th>
+            <th>Condition</th>
+            <th>Check Out By/To</th>
+            <th>Date Out</th>
+            <th>Shelf Location</th>
+            <th>Last Inventory</th>
+            <th>Asset Notes</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in assets %}
+        <tr>
+            <td>{{ pill(fields, 'asset_type', a.asset_type) }}</td>
+            <td class="serial">{{ a.serial_number }}</td>
+            <td>{{ pill(fields, 'ownership', a.ownership) }}</td>
+            <td>{{ pills(fields, 'status', a.status) }}</td>
+            <td>{{ pills(fields, 'location', a.location) }}</td>
+            <td>{{ pill(fields, 'condition', a.condition) }}</td>
+            <td>{{ a.checked_out_to }}</td>
+            <td>{{ a.date_out | mdy }}</td>
+            <td>{{ a.shelf_location }}</td>
+            <td>{{ a.last_inventory | mdy }}</td>
+            <td class="notes">{{ a.notes }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{%- endmacro %}

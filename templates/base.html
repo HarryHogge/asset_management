@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Asset Tracking{% endblock %} · Asset Tracking</title>
+    <link rel="icon" href="data:,">
+    <script>
+        // Apply the saved theme before first paint so the page doesn't flash.
+        try {
+            if (localStorage.getItem('asset-theme') === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        } catch (e) {}
+    </script>
+    <style>
+        :root {
+            --bg: #0A0A0A;
+            --surface: #111111;
+            --surface-2: #181818;
+            --border: #2A2A2A;
+            --text: #FFFFFF;
+            --text-2: #C8C8C8;
+            --muted: #9A9A9A;
+            --accent: #DC0000;
+            --accent-2: #B00000;
+            --accent-hover: #900000;
+            --row-hover: #1A1A1A;
+            --good: #3fa23f;
+            --warn: #e8a100;
+            --bad: #e5484d;
+            --lost: #8a8a8a;
+            /* Single-series chart bars; kept off the red/green/amber status colors. */
+            --series: #6e9ff0;
+        }
+        [data-theme="light"] {
+            --bg: #F5F5F5;
+            --surface: #FFFFFF;
+            --surface-2: #FAFAFA;
+            --border: #E0E0E0;
+            --text: #1A1A1A;
+            --text-2: #333333;
+            --muted: #666666;
+            --row-hover: #F2F2F2;
+            --good: #107c10;
+            --warn: #a86b00;
+            --bad: #c50f1f;
+            --lost: #6b6b6b;
+            --series: #2f6fd6;
+        }
+        * {
+            box-sizing: border-box;
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header-bar {
+            background: linear-gradient(to right, #DC0000, #0A0A0A);
+            color: white;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .header-bar .logo {
+            width: 40px;
+            height: 40px;
+            background: #B00000;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .header-bar h1 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .header-bar .subtitle {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .nav a, .header-right button, .header-right .button {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            color: white;
+            padding: 7px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            text-decoration: none;
+        }
+        .nav a:hover, .header-right button:hover, .header-right .button:hover {
+            background: rgba(255, 255, 255, 0.12);
+        }
+        .nav a.active {
+            background: #B00000;
+            border-color: #B00000;
+        }
+        .nav {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        /* Content */
+        .content {
+            padding: 24px;
+            max-width: 1700px;
+            margin: 0 auto;
+        }
+        @media (max-width: 700px) {
+            .content { padding: 16px; }
+        }
+        .source-note {
+            font-size: 12px;
+            color: var(--muted);
+            margin: 0 0 16px 0;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+        }
+        [data-theme="light"] .card {
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+        }
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0 0 6px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .card-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: var(--accent);
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .card-sub {
+            font-size: 13px;
+            color: var(--muted);
+            margin: 0 0 14px 14px;
+        }
+        .count-badge {
+            background: var(--accent-2);
+            color: white;
+            font-size: 12px;
+            border-radius: 10px;
+            padding: 1px 9px;
+        }
+        .count-badge.zero {
+            background: var(--border);
+            color: var(--muted);
+        }
+
+        /* Pills, matching the SharePoint list's choice colors */
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            height: 22px;
+            padding: 0 9px;
+            border-radius: 11px;
+            font-size: 12px;
+            white-space: nowrap;
+            margin: 1px 2px 1px 0;
+            border: 1px solid transparent;
+        }
+        .pill.plain {
+            border-color: var(--muted);
+            color: var(--text-2);
+        }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th {
+            text-align: left;
+            font-weight: 600;
+            color: var(--muted);
+            padding: 10px 10px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            background: var(--surface);
+        }
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        th.sortable:hover { color: var(--text); }
+        th .arrow { opacity: 0.7; font-size: 10px; }
+        td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+            color: var(--text-2);
+        }
+        tr:hover td { background: var(--row-hover); }
+        td.serial {
+            font-weight: 600;
+            color: var(--text);
+        }
+        td.notes {
+            white-space: pre-line;
+            min-width: 220px;
+            max-width: 340px;
+        }
+        td.num { text-align: right; }
+        td.nowrap { white-space: nowrap; }
+        .flag {
+            color: var(--warn);
+            font-weight: 700;
+            cursor: help;
+        }
+        .muted { color: var(--muted); }
+        .empty {
+            color: var(--muted);
+            font-size: 13px;
+            padding: 8px 0 4px 14px;
+        }
+        a { color: inherit; }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <div class="header-bar">
+        <div class="header-left">
+            <div class="logo">AT</div>
+            <div>
+                <h1>Asset Tracking</h1>
+                <div class="subtitle">Flight Operations · {% block subtitle %}{% endblock %}</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <nav class="nav">
+                {% for key, href, label in pages %}
+                <a href="{{ href }}" class="{{ 'active' if key == active else '' }}">{{ label }}</a>
+                {% endfor %}
+            </nav>
+            {% block actions %}{% endblock %}
+            <button type="button" id="theme-toggle" title="Switch light/dark theme">Theme</button>
+        </div>
+    </div>
+
+    <div class="content">
+        <p class="source-note">
+            Data from <strong>{{ source }}</strong>, exported {{ loaded_at.strftime('%-m/%-d/%Y %-I:%M %p') }}.
+            Times and dates are in the SharePoint site's time zone.
+        </p>
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+        document.getElementById('theme-toggle').addEventListener('click', function () {
+            var root = document.documentElement;
+            var light = root.getAttribute('data-theme') !== 'light';
+            if (light) { root.setAttribute('data-theme', 'light'); }
+            else { root.removeAttribute('data-theme'); }
+            try { localStorage.setItem('asset-theme', light ? 'light' : 'dark'); } catch (e) {}
+            document.dispatchEvent(new CustomEvent('themechange'));
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

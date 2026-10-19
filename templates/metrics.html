@@ -1,0 +1,215 @@
+{% extends 'base.html' %}
+{% block title %}Metrics{% endblock %}
+{% block subtitle %}Metrics{% endblock %}
+
+{% block head %}
+{# Served locally (verified against jsDelivr and unpkg) so charts work without CDN access. #}
+<script src="{{ url_for('static', filename='vendor/chart-4.4.1.umd.js') }}"></script>
+<style>
+    .kpi-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+    .kpi-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 22px 24px;
+        position: relative;
+        overflow: hidden;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    .kpi-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #DC0000, #FF1A1A);
+    }
+    a.kpi-card:hover { border-color: var(--accent); }
+    .kpi-value {
+        font-size: 40px;
+        font-weight: 700;
+        line-height: 1;
+        margin-bottom: 8px;
+    }
+    .kpi-label {
+        font-size: 13px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .kpi-detail {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 6px;
+    }
+    .chart-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 24px;
+    }
+    .chart-grid .card { margin-bottom: 0; }
+    .chart-grid .full { grid-column: span 2; }
+    @media (max-width: 1100px) {
+        .chart-grid { grid-template-columns: minmax(0, 1fr); }
+        .chart-grid .full { grid-column: span 1; }
+    }
+    .chart-container { position: relative; height: 260px; }
+    .chart-container.types { height: {{ 120 + 22 * (summary.by_type | length) }}px; }
+    .att-table td { padding: 6px 10px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="kpi-row">
+    <a class="kpi-card" href="/">
+        <div class="kpi-value">{{ summary.total }}</div>
+        <div class="kpi-label">Assets</div>
+        <div class="kpi-detail">{{ summary.by_type | length }} asset types</div>
+    </a>
+    <div class="kpi-card">
+        <div class="kpi-value">{{ summary.fmc_pct }}%</div>
+        <div class="kpi-label">Fully mission capable</div>
+        <div class="kpi-detail">{{ summary.fmc }} of {{ summary.total }} are FMC</div>
+    </div>
+    <a class="kpi-card" href="/checkouts">
+        <div class="kpi-value">{{ summary.out }}</div>
+        <div class="kpi-label">Checked out</div>
+        <div class="kpi-detail">Status is OUT</div>
+    </a>
+    <div class="kpi-card">
+        <div class="kpi-value">{{ summary.inventory_current_pct }}%</div>
+        <div class="kpi-label">Inventory current</div>
+        <div class="kpi-detail">Counted in the last {{ stale_days }} days</div>
+    </div>
+    <a class="kpi-card" href="/attention">
+        <div class="kpi-value">{{ summary.flagged }}</div>
+        <div class="kpi-label">Need attention</div>
+        <div class="kpi-detail">Assets with at least one data problem</div>
+    </a>
+</div>
+
+<div class="chart-grid">
+    <div class="card full">
+        <h2 class="card-title">Material condition by asset type</h2>
+        <div class="chart-container types"><canvas id="chart-types" role="img" aria-label="Asset count per type, split by material condition"></canvas></div>
+    </div>
+    <div class="card">
+        <h2 class="card-title">Assets by status</h2>
+        <div class="chart-container"><canvas id="chart-status" role="img" aria-label="Asset count per status"></canvas></div>
+    </div>
+    <div class="card">
+        <h2 class="card-title">Assets by ownership</h2>
+        <div class="chart-container"><canvas id="chart-ownership" role="img" aria-label="Asset count per owning team"></canvas></div>
+    </div>
+    <div class="card">
+        <h2 class="card-title">Time since last inventory</h2>
+        <div class="chart-container"><canvas id="chart-age" role="img" aria-label="Asset count by time since last inventory"></canvas></div>
+    </div>
+    <div class="card">
+        <h2 class="card-title">Data problems</h2>
+        <table class="att-table">
+            <tbody>
+                {% for title, n in summary.attention.items() %}
+                <tr><td>{{ title }}</td><td class="num"><span class="count-badge {{ 'zero' if not n else '' }}">{{ n }}</span></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="card-sub" style="margin: 12px 0 0 0;"><a href="/attention">See the items</a></p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var summary = {{ summary | tojson }};
+    var charts = [];
+
+    function css(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function baseOptions(stacked, legend) {
+        var grid = css('--border'), ink = css('--muted');
+        return {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { mode: 'nearest', axis: 'y', intersect: false },
+            plugins: {
+                legend: { display: legend, position: 'top', align: 'start',
+                          labels: { color: css('--text-2'), boxWidth: 12, boxHeight: 12 } },
+                tooltip: { callbacks: {} }
+            },
+            scales: {
+                x: { stacked: stacked, beginAtZero: true, ticks: { color: ink, precision: 0 },
+                     grid: { color: grid }, border: { display: false } },
+                y: { stacked: stacked, ticks: { color: css('--text-2'), autoSkip: false },
+                     grid: { display: false }, border: { color: grid } }
+            }
+        };
+    }
+
+    function bar(id, labels, values, label) {
+        return new Chart(document.getElementById(id), {
+            type: 'bar',
+            data: { labels: labels, datasets: [{
+                label: label, data: values,
+                backgroundColor: css('--series'), borderRadius: 4, borderSkipped: false,
+                maxBarThickness: 26
+            }] },
+            options: baseOptions(false, false)
+        });
+    }
+
+    function draw() {
+        charts.forEach(function (c) { c.destroy(); });
+        charts = [];
+
+        // Material condition uses the status colors: it IS a status, and each
+        // segment is also named in the legend and tooltip.
+        var conditionColor = { 'FMC': css('--good'), 'PMC': css('--warn'),
+                               'NMC': css('--bad'), 'Destroyed/Lost': css('--lost') };
+        var types = Object.keys(summary.by_type);
+        var surface = css('--surface');
+        charts.push(new Chart(document.getElementById('chart-types'), {
+            type: 'bar',
+            data: {
+                labels: types,
+                datasets: summary.conditions.map(function (c) {
+                    return {
+                        label: c,
+                        data: types.map(function (t) { return summary.by_type[t][c]; }),
+                        backgroundColor: conditionColor[c],
+                        borderColor: surface, borderWidth: { left: 0, right: 2, top: 0, bottom: 0 },
+                        borderRadius: 4, borderSkipped: false, maxBarThickness: 18
+                    };
+                })
+            },
+            options: (function () {
+                var o = baseOptions(true, true);
+                o.interaction = { mode: 'index', axis: 'y', intersect: false };
+                o.plugins.tooltip.filter = function (item) { return item.raw > 0; };
+                return o;
+            })()
+        }));
+
+        charts.push(bar('chart-status', Object.keys(summary.status), Object.values(summary.status), 'Assets'));
+        charts.push(bar('chart-ownership', Object.keys(summary.ownership), Object.values(summary.ownership), 'Assets'));
+        charts.push(bar('chart-age', Object.keys(summary.inventory_age), Object.values(summary.inventory_age), 'Assets'));
+    }
+
+    draw();
+    document.addEventListener('themechange', draw);
+})();
+</script>
+{% endblock %}

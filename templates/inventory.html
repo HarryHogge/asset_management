@@ -1,0 +1,230 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import pill, pills %}
+{% block title %}Inventory{% endblock %}
+{% block subtitle %}Inventory{% endblock %}
+
+{% block actions %}
+<a class="button" id="export-link" href="/api/export/assets.xlsx">Export to Excel</a>
+{% endblock %}
+
+{% block head %}
+<style>
+    .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: flex-end;
+        margin-bottom: 14px;
+    }
+    .filters label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--muted);
+    }
+    .filters input[type=search], .filters select {
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--surface-2);
+        color: var(--text);
+        font-size: 13px;
+        min-width: 150px;
+    }
+    .filters input[type=search] { min-width: 240px; }
+    .filters .check {
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
+        padding-bottom: 7px;
+        color: var(--text-2);
+    }
+    .filters button {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-2);
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+    }
+    .result-count {
+        margin-left: auto;
+        font-size: 13px;
+        color: var(--muted);
+        padding-bottom: 7px;
+    }
+    .table-wrap { max-height: calc(100vh - 290px); overflow: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="filters">
+        <label>Search
+            <input type="search" id="f-search" placeholder="Serial, part number, notes, person…">
+        </label>
+        {% for key, label in [('asset_type', 'Asset Type'), ('ownership', 'Ownership'), ('status', 'Status'), ('location', 'Location'), ('condition', 'Condition')] %}
+        <label>{{ label }}
+            <select data-filter="{{ key }}">
+                <option value="">All</option>
+                {% for v in options[key]['values'] %}
+                <option value="{{ v }}">{{ v }}</option>
+                {% endfor %}
+                {% if options[key]['blank'] %}<option value="__blank__">(blank)</option>{% endif %}
+            </select>
+        </label>
+        {% endfor %}
+        <label class="check"><input type="checkbox" id="f-flagged"> Needs attention only</label>
+        <button type="button" id="f-clear">Clear</button>
+        <div class="result-count" id="result-count"></div>
+    </div>
+
+    <div class="table-wrap">
+    <table id="asset-table">
+        <thead>
+            <tr>
+                <th></th>
+                <th class="sortable" data-col="1">Asset Type <span class="arrow"></span></th>
+                <th class="sortable" data-col="2">Serial Number <span class="arrow"></span></th>
+                <th class="sortable" data-col="3">Part Number <span class="arrow"></span></th>
+                <th class="sortable" data-col="4">Ownership <span class="arrow"></span></th>
+                <th class="sortable" data-col="5">Status <span class="arrow"></span></th>
+                <th class="sortable" data-col="6">Location <span class="arrow"></span></th>
+                <th class="sortable" data-col="7">Condition <span class="arrow"></span></th>
+                <th class="sortable" data-col="8">Date Out <span class="arrow"></span></th>
+                <th class="sortable" data-col="9">Check Out By/To <span class="arrow"></span></th>
+                <th>Asset Notes</th>
+                <th class="sortable" data-col="11">Shelf Location <span class="arrow"></span></th>
+                <th class="sortable" data-col="12">Last Inventory <span class="arrow"></span></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in assets %}
+            <tr data-id="{{ a.id }}"
+                data-asset_type="{{ a.asset_type }}"
+                data-ownership="{{ a.ownership }}"
+                data-status="{{ a.status | join('|') }}"
+                data-location="{{ a.location | join('|') }}"
+                data-condition="{{ a.condition }}"
+                data-flagged="{{ 1 if a.id in flagged else 0 }}">
+                <td>{% if a.id in flagged %}<a class="flag" href="/attention" title="Has a data problem; see Needs Attention">!</a>{% endif %}</td>
+                <td data-sort="{{ a.asset_type }}">{{ pill(fields, 'asset_type', a.asset_type) }}</td>
+                <td class="serial" data-sort="{{ a.serial_number }}">{{ a.serial_number }}</td>
+                <td class="nowrap">{{ a.part_number }}</td>
+                <td data-sort="{{ a.ownership }}">{{ pill(fields, 'ownership', a.ownership) }}</td>
+                <td data-sort="{{ a.status | join(',') }}">{{ pills(fields, 'status', a.status) }}</td>
+                <td data-sort="{{ a.location | join(',') }}">{{ pills(fields, 'location', a.location) }}</td>
+                <td data-sort="{{ a.condition }}">{{ pill(fields, 'condition', a.condition) }}</td>
+                <td data-sort="{{ a.date_out.isoformat() if a.date_out else '' }}">{{ a.date_out | mdy }}</td>
+                <td>{{ a.checked_out_to }}</td>
+                <td class="notes">{{ a.notes }}</td>
+                <td>{{ a.shelf_location }}</td>
+                <td data-sort="{{ a.last_inventory.isoformat() if a.last_inventory else '' }}">{{ a.last_inventory | mdy }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var table = document.getElementById('asset-table');
+    var tbody = table.tBodies[0];
+    var rows = Array.prototype.slice.call(tbody.rows);
+    var search = document.getElementById('f-search');
+    var flaggedOnly = document.getElementById('f-flagged');
+    var selects = Array.prototype.slice.call(document.querySelectorAll('[data-filter]'));
+    var countEl = document.getElementById('result-count');
+    var exportLink = document.getElementById('export-link');
+    var STORE = 'asset-inventory-filters';
+
+    function matches(row) {
+        var q = search.value.trim().toLowerCase();
+        if (q && row.textContent.toLowerCase().indexOf(q) === -1) return false;
+        if (flaggedOnly.checked && row.dataset.flagged !== '1') return false;
+        for (var i = 0; i < selects.length; i++) {
+            var want = selects[i].value;
+            if (!want) continue;
+            var have = row.dataset[selects[i].dataset.filter] || '';
+            var values = have ? have.split('|') : [];
+            if (want === '__blank__' ? values.length : values.indexOf(want) === -1) return false;
+        }
+        return true;
+    }
+
+    function apply() {
+        var ids = [];
+        rows.forEach(function (row) {
+            var show = matches(row);
+            row.style.display = show ? '' : 'none';
+            if (show) ids.push(row.dataset.id);
+        });
+        countEl.textContent = ids.length + ' of ' + rows.length + ' assets';
+        exportLink.href = '/api/export/assets.xlsx' +
+            (ids.length === rows.length ? '' : '?ids=' + ids.join(','));
+        try {
+            localStorage.setItem(STORE, JSON.stringify({
+                search: search.value,
+                flagged: flaggedOnly.checked,
+                selects: selects.map(function (s) { return s.value; })
+            }));
+        } catch (e) {}
+    }
+
+    try {
+        var saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+        if (saved) {
+            search.value = saved.search || '';
+            flaggedOnly.checked = !!saved.flagged;
+            (saved.selects || []).forEach(function (v, i) {
+                if (selects[i] && Array.prototype.some.call(selects[i].options, function (o) { return o.value === v; })) {
+                    selects[i].value = v;
+                }
+            });
+        }
+    } catch (e) {}
+
+    search.addEventListener('input', apply);
+    flaggedOnly.addEventListener('change', apply);
+    selects.forEach(function (s) { s.addEventListener('change', apply); });
+    document.getElementById('f-clear').addEventListener('click', function () {
+        search.value = '';
+        flaggedOnly.checked = false;
+        selects.forEach(function (s) { s.value = ''; });
+        apply();
+    });
+
+    // Column sorting; blanks always sort last.
+    var sortCol = null, sortDir = 1;
+    function cellValue(row, col) {
+        var cell = row.cells[col];
+        var v = cell.hasAttribute('data-sort') ? cell.getAttribute('data-sort') : cell.textContent;
+        return v.trim().toLowerCase();
+    }
+    table.querySelectorAll('th.sortable').forEach(function (th) {
+        th.addEventListener('click', function () {
+            var col = parseInt(th.dataset.col, 10);
+            sortDir = sortCol === col ? -sortDir : 1;
+            sortCol = col;
+            table.querySelectorAll('th .arrow').forEach(function (a) { a.textContent = ''; });
+            th.querySelector('.arrow').textContent = sortDir === 1 ? '▲' : '▼';
+            rows.sort(function (a, b) {
+                var x = cellValue(a, col), y = cellValue(b, col);
+                if (!x && !y) return 0;
+                if (!x) return 1;
+                if (!y) return -1;
+                return sortDir * x.localeCompare(y, undefined, { numeric: true });
+            });
+            rows.forEach(function (r) { tbody.appendChild(r); });
+        });
+    });
+
+    apply();
+})();
+</script>
+{% endblock %}
