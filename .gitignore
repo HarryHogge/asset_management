@@ -8,3 +8,11 @@ __pycache__/
 # out of git. (Asset Tracking V2.csv was committed before this rule existed.)
 exports/
 *.xlsx
+
+# Certificates and keys never go in git. The SharePoint certificate lives
+# outside this folder (SP_CERT_PATH); these rules are a second line of defence.
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer

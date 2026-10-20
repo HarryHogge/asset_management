@@ -3,15 +3,18 @@ from datetime import datetime
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
 import io
+import logging
 import os
+import sys
 
 import assets as asset_data
+import sharepoint
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, '.env'), encoding='utf-8')
 
 app = Flask(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Where the SharePoint export lives. Relative paths resolve against this repo.
 ASSET_CSV = os.getenv('ASSET_CSV', 'Asset Tracking V2.csv')
 if not os.path.isabs(ASSET_CSV):
@@ -21,6 +24,35 @@ SITE_TIMEZONE = os.getenv('SITE_TIMEZONE', 'America/Los_Angeles')
 INVENTORY_STALE_DAYS = int(os.getenv('INVENTORY_STALE_DAYS', '90'))
 # Not 5060/5061: those are SIP ports and Chrome refuses to open them.
 PORT = int(os.getenv('PORT', '5070'))
+
+
+class CsvSource:
+    """The SharePoint list's CSV export (the default source)."""
+
+    def __init__(self, path, tz_name):
+        self.path = path
+        self.tz_name = tz_name
+
+    def load(self):
+        return asset_data.load(self.path, self.tz_name)
+
+
+def make_source(name, env=None):
+    """The data source named by ASSET_SOURCE. Settings problems stop the app
+    here, at startup, with a message naming the setting."""
+    name = (name or 'csv').strip().lower()
+    if name == 'csv':
+        return CsvSource(ASSET_CSV, SITE_TIMEZONE)
+    if name == 'sharepoint':
+        try:
+            return sharepoint.SharePointSource.from_env(SITE_TIMEZONE, env)
+        except sharepoint.ConfigError as e:
+            sys.exit('Settings problem, the dashboard did not start: %s' % e)
+    sys.exit('Settings problem, the dashboard did not start: ASSET_SOURCE must be '
+             '"csv" or "sharepoint".')
+
+
+SOURCE = make_source(os.getenv('ASSET_SOURCE'))
 
 PAGES = [
     ('inventory', '/', 'Inventory'),
@@ -36,10 +68,13 @@ def today():
 
 def load():
     try:
-        return asset_data.load(ASSET_CSV, SITE_TIMEZONE)
+        return SOURCE.load()
     except FileNotFoundError:
         abort(503, description='Asset export not found: %s (set ASSET_CSV in .env)'
               % os.path.basename(ASSET_CSV))
+    except sharepoint.SourceError as e:
+        abort(503, description='The asset list could not be read from SharePoint, and '
+              'there is no earlier copy to show. Reason: %s' % e)
 
 
 @app.context_processor
@@ -63,14 +98,18 @@ def mdy_time(value):
                               'AM' if value.hour < 12 else 'PM')
 
 
-def render(template, active, **kwargs):
-    data = load()
+def render(template, active, data, **kwargs):
+    # `data` is the copy the route already used, so a background refresh that
+    # finishes mid-request cannot mix two versions on one page.
     return render_template(
         template,
         active=active,
         fields=data['fields'],
         source=data['source'],
         loaded_at=data['loaded_at'],
+        live=data.get('live', False),
+        stale=data.get('stale'),
+        refresh_minutes=max(1, round(sharepoint.RETRY_AFTER_FAILURE_SECONDS / 60)),
         **kwargs,
     )
 
@@ -79,7 +118,7 @@ def render(template, active, **kwargs):
 def inventory():
     data = load()
     groups = asset_data.attention(data['assets'], today(), INVENTORY_STALE_DAYS)
-    return render('inventory.html', 'inventory',
+    return render('inventory.html', 'inventory', data,
                   assets=data['assets'],
                   options=asset_data.filter_options(data['assets'], data['fields']),
                   flagged=asset_data.flagged_ids(groups))
@@ -89,7 +128,7 @@ def inventory():
 def attention():
     data = load()
     groups = asset_data.attention(data['assets'], today(), INVENTORY_STALE_DAYS)
-    return render('attention.html', 'attention', groups=groups)
+    return render('attention.html', 'attention', data, groups=groups)
 
 
 @app.route('/checkouts')
@@ -100,13 +139,13 @@ def checkouts():
     for r in rows:
         holders.setdefault(r['checked_out_to'] or '(nobody listed)', []).append(r)
     holders = sorted(holders.items(), key=lambda kv: (-len(kv[1]), kv[0]))
-    return render('checkouts.html', 'checkouts', rows=rows, holders=holders)
+    return render('checkouts.html', 'checkouts', data, rows=rows, holders=holders)
 
 
 @app.route('/metrics')
 def metrics():
     data = load()
-    return render('metrics.html', 'metrics',
+    return render('metrics.html', 'metrics', data,
                   summary=asset_data.summary(data['assets'], today(), INVENTORY_STALE_DAYS))
 
 
@@ -197,9 +236,17 @@ def export_assets():
 
 if __name__ == '__main__':
     from waitress import serve
+    # Failures are logged with their cause. MSAL is held to warnings so the
+    # log never fills with sign-in chatter.
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    logging.getLogger('msal').setLevel(logging.WARNING)
     print("=" * 60)
     print("Asset Tracking Dashboard starting...")
-    print(f"Asset export: {ASSET_CSV}")
+    if isinstance(SOURCE, CsvSource):
+        print(f"Data source: CSV export {ASSET_CSV}")
+    else:
+        print(f"Data source: SharePoint list {SOURCE.settings['list_name']}, "
+              f"refreshed every {SOURCE.settings['refresh_seconds']} seconds")
     print(f"Site time zone: {SITE_TIMEZONE}")
     print("=" * 60)
     print(f"\nOpen http://localhost:{PORT} in your browser\n")

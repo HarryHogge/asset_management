@@ -3,3 +3,18 @@ waitress==3.0.0
 python-dotenv==1.0.1
 openpyxl==3.1.5
 tzdata==2026.5
+
+# Live SharePoint source (ASSET_SOURCE=sharepoint). Every package these pull in
+# is pinned too, so PROD installs exactly what was tested. All have ready-made
+# Windows wheels, so no compiler is needed. Needs Python 3.10 or later.
+msal==1.39.0
+cryptography==50.0.2
+requests==2.34.2
+PyJWT==2.15.1
+cffi==2.1.1
+pycparser==3.11
+certifi==2026.10.19
+charset-normalizer==3.5.2
+idna==3.20
+urllib3==2.8.0
+typing-extensions==4.16.0; python_version < "3.11"

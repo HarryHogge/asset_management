@@ -142,6 +142,17 @@
             color: var(--muted);
             margin: 0 0 16px 0;
         }
+        .stale-banner {
+            border: 1px solid var(--warn);
+            border-left-width: 6px;
+            background: var(--surface);
+            color: var(--text);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 0 0 18px 0;
+            font-size: 14px;
+            line-height: 1.45;
+        }
         .card {
             background: var(--surface);
             border: 1px solid var(--border);
@@ -283,9 +294,17 @@
 
     <div class="content">
         <p class="source-note">
-            Data from <strong>{{ source }}</strong>, exported {{ loaded_at | mdy_time }}.
+            Data from <strong>{{ source }}</strong>, {{ 'fetched' if live else 'exported' }} {{ loaded_at | mdy_time }}.
             Times and dates are in the SharePoint site's time zone.
         </p>
+        {% if stale %}
+        <div class="stale-banner" role="alert">
+            <strong>This data is out of date.</strong>
+            It was fetched {{ stale.since | mdy_time }}. The last attempt to refresh it,
+            at {{ stale.failed_at | mdy_time }}, failed: {{ stale.reason }}
+            The dashboard tries again every {{ refresh_minutes }} minute{{ '' if refresh_minutes == 1 else 's' }}.
+        </div>
+        {% endif %}
         {% block content %}{% endblock %}
     </div>
 

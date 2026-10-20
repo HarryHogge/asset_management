@@ -111,8 +111,15 @@ def _pill_colors(formatter):
 def parse_schema(line):
     """Parse the `ListSchema=` line into {key: {label, type, choices, colors}}."""
     payload = json.loads(line.split('=', 1)[1])
+    return parse_schema_xml(payload.get('schemaXmlList', []))
+
+
+def parse_schema_xml(xml_list):
+    """Turn SharePoint column XML (one <Field .../> string per column) into
+    {key: {label, type, choices, colors}}. The CSV export's schema line and
+    SharePoint's REST `SchemaXml` hold the same XML, so both sources use this."""
     fields = {}
-    for xml in payload.get('schemaXmlList', []):
+    for xml in xml_list:
         el = ElementTree.fromstring(xml)
         label = el.get('DisplayName')
         key = COLUMNS.get(label)
@@ -150,14 +157,24 @@ def _to_local_date(value, tz):
 
 
 def _clean_row(raw, tz, row_id):
+    """One list item as the pages expect it. `raw` is keyed by the column's
+    display name. Values are text as in the CSV export; multi-choice columns
+    may also arrive as a list, which is how Microsoft Graph sends them."""
     row = {'id': row_id}
     for header, key in COLUMNS.items():
         value = raw.get(header) or ''
+        if not isinstance(value, (str, list)):
+            value = str(value)
+        if isinstance(value, list) and key not in MULTI_CHOICE:
+            value = ', '.join(str(v) for v in value)
         if key in MULTI_CHOICE:
-            try:
-                parsed = json.loads(value) if value.strip() else []
-            except ValueError:
-                parsed = [value]
+            if isinstance(value, list):
+                parsed = value
+            else:
+                try:
+                    parsed = json.loads(value) if value.strip() else []
+                except ValueError:
+                    parsed = [value]
             if not isinstance(parsed, list):
                 parsed = [parsed]
             row[key] = [str(v).strip() for v in parsed if str(v).strip()]
