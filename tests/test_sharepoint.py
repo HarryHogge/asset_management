@@ -9,7 +9,7 @@ import app as dashboard
 import assets as asset_data
 import sharepoint
 from fake_sharepoint import (FakeClock, FakeSharePoint, FakeTokens, LIST_NAME, fake_env,
-                             make_item)
+                             make_item, schema_xml)
 
 TZ = ZoneInfo('America/Los_Angeles')
 PEOPLE = {
@@ -60,7 +60,7 @@ def test_internal_names_come_from_the_column_definitions(pfx):
     assert reader.mapping['Check Out By/To'] == 'CheckOutBy_x002f_To'
     assert reader.mapping['Location'] == 'OwnershipandLocation'
     assert row['serial_number'] == 'SN-TEST-000'
-    assert row['checked_out_to'] == 'pat.example@example.com'
+    assert row['checked_out_to'] == 'Pat Example'
     assert row['location'] == ['Test Bay A']
     assert row['status'] == ['OUT']
     # Same cleaning as the CSV path: tabs and trailing spaces removed.
@@ -93,14 +93,15 @@ def test_winter_and_summer_dates_land_on_the_same_day_as_the_csv(pfx):
     assert reader.date_check() == (2, 2)
 
 
-def test_person_ids_resolve_and_unknown_ids_are_shown_and_recorded(pfx, caplog):
+def test_person_ids_resolve_to_names_and_unknown_ids_are_shown_and_recorded(pfx, caplog):
     items = sample_items(3)
     items[1] = make_item(101, 'SN-TEST-001', person=99)
     fake = FakeSharePoint(items, people=PEOPLE)
     reader = reader_for(fake, pfx)
     with caplog.at_level(logging.WARNING, logger='asset_management.sharepoint'):
         rows = reader.fetch()
-    assert rows[0]['checked_out_to'] == 'pat.example@example.com'
+    # The display name, as SharePoint's own screen shows it, not the email.
+    assert rows[0]['checked_out_to'] == 'Pat Example'
     assert rows[1]['checked_out_to'] == '(unknown person, ID 99)'
     assert rows[2]['checked_out_to'] == ''
     assert reader.people_resolved == 1
@@ -124,7 +125,12 @@ def test_person_lookup_falls_back_to_sharepoint_rest(pfx):
     reader = reader_for(fake, pfx)
     row = reader.fetch()[0]
     assert reader.people_route == 'rest'
-    assert row['checked_out_to'] == 'pat.example@example.com'
+    assert row['checked_out_to'] == 'Pat Example'
+
+
+def test_person_with_no_name_falls_back_to_email(pfx):
+    fake = FakeSharePoint(sample_items(1), people={'7': {'Title': '', 'EMail': 'pat@example.com'}})
+    assert reader_for(fake, pfx).fetch()[0]['checked_out_to'] == 'pat@example.com'
 
 
 def test_choices_and_colors_come_from_schemaxml(pfx):
@@ -142,17 +148,105 @@ def test_choices_and_colors_come_from_schemaxml(pfx):
     assert 'https://contoso.sharepoint.com/.default' in tokens.scopes
 
 
-def test_choices_fall_back_to_graph_when_schemaxml_is_refused(pfx):
-    fake = FakeSharePoint(sample_items(1), people=PEOPLE, schema=None)
+GREEN = {'bg': '#498205', 'fg': '#ffffff'}
+RED = {'bg': '#a4262c', 'fg': '#ffffff'}
+
+
+def write_saved(tmp_path, data):
+    path = tmp_path / 'pill_colors.json'
+    path.write_text(json.dumps(data), encoding='utf-8')
+    return str(path)
+
+
+def saved_file(tmp_path):
+    """Made-up saved colors: Status knows IN, OUT and RMA but not BAILMENT;
+    Asset Type is not in the file at all."""
+    return write_saved(tmp_path, {
+        'status': {'choices': ['IN', 'OUT', 'RMA'], 'colors': {'IN': GREEN, 'OUT': RED}},
+        'condition': {'choices': ['FMC', 'PMC', 'NMC', 'Destroyed/Lost'], 'colors': {'NMC': RED}},
+    })
+
+
+def test_colors_come_from_the_saved_file_when_schemaxml_is_refused(pfx, tmp_path):
+    fake = FakeSharePoint(sample_items(1), people=PEOPLE, schema=401)
     reader = reader_for(fake, pfx)
+    reader.saved_colors_path = saved_file(tmp_path)
     rows = reader.fetch()
-    assert reader.schema_source == 'fallback'
-    assert 'Permission missing' in reader.schema_fallback_reason
+    assert reader.schema_source == 'saved'
+    assert reader.schema_status == 401
+    # Choices come from Graph, in Graph's order; colors from the saved file.
     assert reader.fields['status']['choices'] == ['IN', 'OUT', 'RMA', 'BAILMENT']
     assert reader.fields['status']['type'] == 'MultiChoice'
+    assert reader.fields['status']['colors'] == {'IN': GREEN, 'OUT': RED}
+    assert reader.fields['condition']['colors'] == {'NMC': RED}
+    # A choice that is not in the saved file gets the default pill, and is listed.
+    assert 'BAILMENT' not in reader.fields['status']['colors']
+    assert reader.fields['asset_type']['colors'] == {}
+    assert reader.new_choices['Status'] == ['BAILMENT']
+    assert reader.new_choices['Asset Type'] == ['VXE-30', 'SGCS 1', 'Field Support Kit']
+    assert len(rows) == 1
+
+
+@pytest.mark.parametrize('saved', ['missing', 'not json', 'wrong shape'])
+def test_default_pills_when_schemaxml_is_refused_and_no_saved_file(pfx, tmp_path, saved):
+    fake = FakeSharePoint(sample_items(1), people=PEOPLE, schema=None)
+    reader = reader_for(fake, pfx)
+    path = tmp_path / 'pill_colors.json'
+    if saved == 'not json':
+        path.write_text('{not json', encoding='utf-8')
+    elif saved == 'wrong shape':
+        path.write_text(json.dumps({'status': {'choices': ['IN'], 'colors': {'IN': 'green'}}}),
+                        encoding='utf-8')
+    reader.saved_colors_path = str(path)
+    rows = reader.fetch()
+    assert reader.schema_source == 'default'
+    assert 'Permission missing' in reader.schema_fallback_reason
+    assert 'pill_colors.json' in reader.saved_colors_reason
+    assert reader.fields['status']['choices'] == ['IN', 'OUT', 'RMA', 'BAILMENT']
     assert reader.fields['asset_type']['type'] == 'Choice'
     assert all(f['colors'] == {} for f in reader.fields.values())
     assert len(rows) == 1
+
+
+def test_schemaxml_wins_over_the_saved_file(pfx, tmp_path):
+    fake = FakeSharePoint(sample_items(1), people=PEOPLE)
+    reader = reader_for(fake, pfx)
+    reader.saved_colors_path = write_saved(tmp_path, {
+        'status': {'choices': ['IN'], 'colors': {'IN': RED}}})
+    reader.fetch()
+    assert reader.schema_source == 'SchemaXml'
+    assert reader.fields['status']['colors']['IN']['bg'] == asset_data.BG_COLORS['BgGreen']
+
+
+def test_a_refused_schemaxml_is_logged_once_and_retried_every_refresh(pfx, tmp_path, caplog):
+    fake = FakeSharePoint(sample_items(2), people=PEOPLE, schema=401)
+    clock = FakeClock()
+    settings = sharepoint.load_settings(fake_env(pfx))
+    client = sharepoint.GraphClient(FakeTokens(), session=fake, sleep=lambda s: None)
+    source = sharepoint.SharePointSource(settings, 'America/Los_Angeles', client=client,
+                                         clock=clock, background=False,
+                                         saved_colors_path=saved_file(tmp_path))
+    with caplog.at_level(logging.INFO, logger='asset_management.sharepoint'):
+        for _ in range(4):
+            data = source.load()
+            clock.advance(301)
+        assert data['fields']['status']['colors']['IN'] == GREEN
+        # SharePoint was asked for the formatting at every refresh...
+        assert len([c for c in fake.calls if c.endswith('&$top=500')]) == 4
+        used_saved = [r for r in caplog.records if 'using the saved colors' in r.getMessage()]
+        # ...but the refusal is in the log only once.
+        assert len(used_saved) == 1
+        assert "SharePoint's own Sites.Selected" in used_saved[0].getMessage()
+        assert 'BAILMENT' in caplog.text
+
+        # Once IT grants the permission, colors go live, logged once.
+        fake.schema = schema_xml()
+        source.load()
+        clock.advance(301)
+        data = source.load()
+    assert data['fields']['status']['colors']['OUT']['bg'] == asset_data.BG_COLORS['BgDarkRed']
+    assert len([r for r in caplog.records if 'read live' in r.getMessage()]) == 1
+    assert len([r for r in caplog.records if 'using the saved colors' in r.getMessage()]) == 1
 
 
 def test_list_not_found_names_the_list(pfx):
@@ -208,15 +302,6 @@ def test_wrong_certificate_password(pfx):
     assert 'wrong password 123' not in str(e.value)
     cert = sharepoint.load_certificate(pfx['path'], pfx['password'])
     assert len(cert['thumbprint_sha1']) == 40
-
-
-def test_app_does_not_start_with_a_missing_setting(pfx):
-    with pytest.raises(SystemExit) as e:
-        dashboard.make_source('sharepoint', fake_env(pfx, SP_SITE_ID=None))
-    assert 'SP_SITE_ID' in str(e.value)
-    with pytest.raises(SystemExit) as e:
-        dashboard.make_source('sharepoint', fake_env(pfx, SP_CERT_PASSWORD='nope'))
-    assert 'SP_CERT_PASSWORD' in str(e.value) and 'nope' not in str(e.value)
 
 
 def test_refresh_seconds_default_and_validation(pfx):
@@ -359,12 +444,13 @@ def test_sign_in_errors_are_in_plain_words():
 
 # --- The check command -----------------------------------------------------
 
-def run_check(fake, pfx, **env):
+def run_check(fake, pfx, saved_colors_path=sharepoint.PILL_COLORS_PATH, **env):
     lines = []
     tokens = FakeTokens(roles=['Sites.Selected'])
     code = sharepoint.run_check(
         fake_env(pfx, **env), out=lines.append,
-        client_factory=lambda s: sharepoint.GraphClient(tokens, session=fake, sleep=lambda x: None))
+        client_factory=lambda s: sharepoint.GraphClient(tokens, session=fake, sleep=lambda x: None),
+        saved_colors_path=saved_colors_path)
     return code, '\n'.join(lines), tokens
 
 
@@ -379,10 +465,11 @@ def test_check_reports_every_step_without_secrets_or_contents(pfx):
     assert 'Found "Asset Tracking V2"' in text
     assert 'Check Out By/To | CheckOutBy_x002f_To | personOrGroup' in text
     assert '5 items, read in 3 page(s).' in text
-    assert 'From SharePoint SchemaXml' in text
+    assert 'LIVE: from SharePoint SchemaXml' in text
     assert 'Resolved 1, not resolved 1' in text
     assert 'All 2 date values are midnight' in text
     assert 'RESULT: every step passed.' in text
+    assert 'Pat Example' not in text
     for secret in [tokens.token_value, pfx['password'], 'SN-TEST', 'pat.example',
                    'made-up note', 'client-made-up-0002', 'tenant-made-up-0001']:
         assert secret not in text
@@ -401,6 +488,29 @@ def test_check_says_which_step_failed_and_keeps_earlier_steps(pfx):
     assert '[FAILED] 4. Site' in text and 'Not found: the site in SP_SITE_ID' in text
     assert '5. List: not run, because step 4 failed' in text
     assert 'RESULT: stopped at 4. Site.' in text
+
+
+def test_check_step_8_names_each_color_source(pfx, tmp_path):
+    _, text, _ = run_check(FakeSharePoint(sample_items(1), people=PEOPLE), pfx)
+    assert '[OK]     8. Choices and colors' in text
+    assert 'LIVE: from SharePoint SchemaXml' in text
+
+    _, text, _ = run_check(FakeSharePoint(sample_items(1), people=PEOPLE, schema=401), pfx,
+                           saved_colors_path=saved_file(tmp_path))
+    assert 'SAVED: choices from Graph, colors from pill_colors.json' in text
+    assert 'HTTP 401' in text
+    assert ("The app probably needs SharePoint's own Sites.Selected permission, in addition "
+            "to the one for Microsoft Graph") in text
+    assert 'shown with the default pill: Asset Type: VXE-30' in text
+    assert 'Status: BAILMENT' in text
+    assert 'RESULT: every step passed.' in text
+
+    _, text, _ = run_check(FakeSharePoint(sample_items(1), people=PEOPLE, schema=None), pfx,
+                           saved_colors_path=str(tmp_path / 'nowhere.json'))
+    assert 'DEFAULT: choices from Graph, pills in the default style.' in text
+    assert 'Permission missing' in text
+    assert 'Saved colors not used: there is no nowhere.json next to the app.' in text
+    assert "SharePoint's own Sites.Selected" not in text
 
 
 def test_check_reports_a_wrong_password_as_the_certificate_step(pfx):

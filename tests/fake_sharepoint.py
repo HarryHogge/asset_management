@@ -155,8 +155,10 @@ class FakeSharePoint:
 
     def _rest(self, path):
         if path.endswith('/fields'):
-            if self.schema is None:
-                return FakeResponse(403, {'odata.error': {'code': '-2147024891, Access denied'}})
+            # schema=None refuses with 403; schema=401 (any number) with that status.
+            if self.schema is None or isinstance(self.schema, int):
+                return FakeResponse(self.schema or 403,
+                                    {'odata.error': {'code': '-2147024891, Access denied'}})
             return FakeResponse(200, {'value': [{'SchemaXml': x, 'Hidden': False} for x in self.schema]})
         m = re.search(r'getuserbyid\((\d+)\)', path)
         if m:

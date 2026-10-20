@@ -5,13 +5,20 @@ from zoneinfo import ZoneInfo
 import io
 import logging
 import os
-import sys
 
 import assets as asset_data
 import sharepoint
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, '.env'), encoding='utf-8')
+
+if __name__ == '__main__':
+    # Set up before the data source is made, so a settings problem found at
+    # startup reaches the log in the same format as everything else. MSAL is
+    # held to warnings so the log never fills with sign-in chatter.
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    logging.getLogger('msal').setLevel(logging.WARNING)
+log = logging.getLogger('asset_management.app')
 
 app = Flask(__name__)
 
@@ -37,19 +44,32 @@ class CsvSource:
         return asset_data.load(self.path, self.tz_name)
 
 
+class UnavailableSource:
+    """Stands in for the data source when a setting is wrong. The dashboard
+    stays up (under PM2, exiting would only restart it over and over) and
+    every page says which setting to fix."""
+
+    def __init__(self, problem):
+        self.problem = problem
+
+    def load(self):
+        raise sharepoint.ConfigError(self.problem)
+
+
 def make_source(name, env=None):
-    """The data source named by ASSET_SOURCE. Settings problems stop the app
-    here, at startup, with a message naming the setting."""
+    """The data source named by ASSET_SOURCE. A settings problem is logged
+    here, once, and every page then shows it until .env is fixed."""
     name = (name or 'csv').strip().lower()
-    if name == 'csv':
-        return CsvSource(ASSET_CSV, SITE_TIMEZONE)
-    if name == 'sharepoint':
-        try:
+    try:
+        if name == 'csv':
+            return CsvSource(ASSET_CSV, SITE_TIMEZONE)
+        if name == 'sharepoint':
             return sharepoint.SharePointSource.from_env(SITE_TIMEZONE, env)
-        except sharepoint.ConfigError as e:
-            sys.exit('Settings problem, the dashboard did not start: %s' % e)
-    sys.exit('Settings problem, the dashboard did not start: ASSET_SOURCE must be '
-             '"csv" or "sharepoint".')
+        raise sharepoint.ConfigError('ASSET_SOURCE must be csv or sharepoint.')
+    except sharepoint.ConfigError as e:
+        log.error('Settings problem: %s The dashboard is running, but every page shows '
+                  'this until .env is fixed and the dashboard is restarted.', e)
+        return UnavailableSource(str(e))
 
 
 SOURCE = make_source(os.getenv('ASSET_SOURCE'))
@@ -72,9 +92,23 @@ def load():
     except FileNotFoundError:
         abort(503, description='Asset export not found: %s (set ASSET_CSV in .env)'
               % os.path.basename(ASSET_CSV))
-    except sharepoint.SourceError as e:
-        abort(503, description='The asset list could not be read from SharePoint, and '
-              'there is no earlier copy to show. Reason: %s' % e)
+    except sharepoint.ConfigError as e:
+        abort(503, description='The dashboard cannot read the asset list because of a '
+              'settings problem. %s Fix it in .env on the server, then restart the '
+              'dashboard.' % e)
+    except sharepoint.SourceError:
+        # The reason is already in the log, written when the fetch failed.
+        abort(503, description='SharePoint could not be reached, and there is no earlier '
+              'copy of the asset list to show. The dashboard tries again every minute, '
+              'so reload this page shortly. The reason is in the dashboard log.')
+
+
+@app.errorhandler(503)
+def unavailable(e):
+    # The JSON endpoints answer in JSON; pages and the Excel download get a page.
+    if request.path.startswith('/api/') and not request.path.startswith('/api/export/'):
+        return jsonify({'error': e.description}), 503
+    return render_template('error.html', active=None, message=e.description), 503
 
 
 @app.context_processor
@@ -87,15 +121,27 @@ def mdy(value):
     return '%d/%d/%d' % (value.month, value.day, value.year) if value else ''
 
 
-@app.template_filter('mdy_time')
-def mdy_time(value):
+def _clock(value):
     # Built by hand rather than with strftime's %-m/%-I: those no-leading-zero
     # flags don't exist on Windows and raise ValueError there.
+    hour = value.hour % 12 or 12
+    return '%d:%02d %s' % (hour, value.minute, 'AM' if value.hour < 12 else 'PM')
+
+
+@app.template_filter('mdy_time')
+def mdy_time(value):
+    return '%s %s' % (mdy(value), _clock(value)) if value else ''
+
+
+@app.template_filter('short_time')
+def short_time(value):
+    """Just the time if it is today in the site's time zone, otherwise the
+    date and time, so "9:40 AM" never means yesterday."""
     if not value:
         return ''
-    hour = value.hour % 12 or 12
-    return '%s %d:%02d %s' % (mdy(value), hour, value.minute,
-                              'AM' if value.hour < 12 else 'PM')
+    if value.astimezone(ZoneInfo(SITE_TIMEZONE)).date() == today():
+        return _clock(value)
+    return mdy_time(value)
 
 
 def render(template, active, data, **kwargs):
@@ -109,7 +155,6 @@ def render(template, active, data, **kwargs):
         loaded_at=data['loaded_at'],
         live=data.get('live', False),
         stale=data.get('stale'),
-        refresh_minutes=max(1, round(sharepoint.RETRY_AFTER_FAILURE_SECONDS / 60)),
         **kwargs,
     )
 
@@ -236,14 +281,14 @@ def export_assets():
 
 if __name__ == '__main__':
     from waitress import serve
-    # Failures are logged with their cause. MSAL is held to warnings so the
-    # log never fills with sign-in chatter.
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
-    logging.getLogger('msal').setLevel(logging.WARNING)
     print("=" * 60)
     print("Asset Tracking Dashboard starting...")
     if isinstance(SOURCE, CsvSource):
         print(f"Data source: CSV export {ASSET_CSV}")
+    elif isinstance(SOURCE, UnavailableSource):
+        print("Data source: NOT AVAILABLE because of a settings problem (see the log line")
+        print("above). Every page shows the problem until .env is fixed and the dashboard")
+        print("is restarted.")
     else:
         print(f"Data source: SharePoint list {SOURCE.settings['list_name']}, "
               f"refreshed every {SOURCE.settings['refresh_seconds']} seconds")

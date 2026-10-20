@@ -14,9 +14,11 @@ How a fetch works, in order:
 5. Read the choice values and pill colors. Graph does not return SharePoint's
    column formatting, so these come from SharePoint's own REST API
    (`SchemaXml`, the same XML the CSV export carries). If that is refused,
-   the choices come from Graph and the pills use the default style.
-6. Turn the "Check Out By/To" person IDs into the person's email address,
-   which is what the CSV export shows, through the site's hidden
+   the choices come from Graph and the colors from the saved file
+   pill_colors.json; if that cannot be read either, pills use the default
+   style. SchemaXml is tried again on every refresh.
+6. Turn the "Check Out By/To" person IDs into the person's display name, as
+   SharePoint's own screen shows it, through the site's hidden
    "User Information List".
 7. Clean each item into the same row the CSV path produces.
 
@@ -56,6 +58,8 @@ REQUEST_TIMEOUT_SECONDS = 30
 PAGE_SIZE = 200
 USER_INFO_LIST = 'User Information List'
 PERSON_HEADER = 'Check Out By/To'
+# Colors saved from a CSV export by scripts/save_pill_colors.py.
+PILL_COLORS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pill_colors.json')
 DATE_HEADERS = [h for h, k in asset_data.COLUMNS.items() if k in asset_data.DATES]
 MULTI_HEADERS = [h for h, k in asset_data.COLUMNS.items() if k in asset_data.MULTI_CHOICE]
 
@@ -67,7 +71,11 @@ class ConfigError(Exception):
 
 class SourceError(Exception):
     """Reading from Microsoft failed. The message is in plain words and is
-    safe to show on a page or in a log."""
+    safe to write to the log. `status` is the HTTP status, when there was one."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +281,13 @@ class GraphClient:
                 self.sleep(min(max(wait, 1), 30))
                 continue
             if resp.status_code != 200:
-                raise SourceError(http_error(resp, what))
+                raise SourceError(http_error(resp, what), status=resp.status_code)
             try:
                 return resp.json()
             except ValueError:
                 raise SourceError('Microsoft sent a reply that is not JSON while reading %s.'
                                   % what) from None
-        raise SourceError(http_error(resp, what))
+        raise SourceError(http_error(resp, what), status=resp.status_code)
 
     def get_all(self, url, what, scope=GRAPH_SCOPE, accept='application/json'):
         """Every result across all pages. Returns (values, pages)."""
@@ -347,11 +355,12 @@ class ListReader:
     """One pass over the list. The steps are separate so the check command
     can run them one at a time and report each."""
 
-    def __init__(self, client, settings, tz, people_cache=None):
+    def __init__(self, client, settings, tz, people_cache=None, saved_colors_path=PILL_COLORS_PATH):
         self.client = client
         self.settings = settings
         self.tz = tz
         self.people_cache = {} if people_cache is None else people_cache
+        self.saved_colors_path = saved_colors_path
         self.site = None
         self.list = None
         self.columns = []
@@ -361,6 +370,9 @@ class ListReader:
         self.fields = {}
         self.schema_source = None
         self.schema_fallback_reason = None
+        self.schema_status = None
+        self.saved_colors_reason = None
+        self.new_choices = {}
         self.people_route = None
         self.people_resolved = 0
         self.people_unresolved = []
@@ -420,8 +432,19 @@ class ListReader:
         return self.items
 
     def read_schema(self):
-        """Choices and pill colors. SharePoint's REST API returns each column's
-        `SchemaXml`, which includes the formatting; Graph does not."""
+        """Choices and pill colors, from the first of these that works:
+
+        1. 'SchemaXml': SharePoint's REST API, which returns each column's
+           `SchemaXml` including the formatting (Graph does not);
+        2. 'saved': the choices from Graph, colored from pill_colors.json. A
+           choice that is not in that file gets the default pill;
+        3. 'default': the choices from Graph, every pill in the default style.
+
+        Logging is left to SharePointSource, so a refusal that repeats on
+        every refresh is logged once, not every five minutes."""
+        self.schema_status = None
+        self.saved_colors_reason = None
+        self.new_choices = {}
         web_url = (self.site or {}).get('webUrl', '')
         host = urlparse(web_url).netloc
         try:
@@ -438,13 +461,34 @@ class ListReader:
             self.fields = asset_data.parse_schema_xml(xml_list)
             self.schema_source = 'SchemaXml'
             self.schema_fallback_reason = None
+            return self.fields
+        except SourceError as e:
+            self.schema_fallback_reason = str(e)
+            self.schema_status = e.status
         except Exception as e:
-            reason = str(e) if isinstance(e, SourceError) else (
-                'the column formatting could not be read (%s)' % type(e).__name__)
-            log.warning('Pill colors not available, using defaults: %s', reason)
-            self.fields = self._fields_from_graph()
-            self.schema_source = 'fallback'
-            self.schema_fallback_reason = reason
+            self.schema_fallback_reason = ('the column formatting could not be read (%s)'
+                                           % type(e).__name__)
+        self.fields = self._fields_from_graph()
+        name = os.path.basename(self.saved_colors_path)
+        try:
+            saved = asset_data.read_saved_colors(self.saved_colors_path)
+        except FileNotFoundError:
+            self.saved_colors_reason = 'there is no %s next to the app' % name
+        except OSError as e:
+            self.saved_colors_reason = '%s could not be opened (%s)' % (name, type(e).__name__)
+        except ValueError as e:
+            self.saved_colors_reason = '%s could not be used: %s' % (name, e)
+        if self.saved_colors_reason:
+            self.schema_source = 'default'
+            return self.fields
+        self.schema_source = 'saved'
+        for key, field in self.fields.items():
+            entry = saved.get(key) or {'choices': [], 'colors': {}}
+            field['colors'] = {c: entry['colors'][c] for c in field['choices']
+                               if c in entry['colors']}
+            new = [c for c in field['choices'] if c not in entry['choices']]
+            if new:
+                self.new_choices[field['label']] = new
         return self.fields
 
     def _fields_from_graph(self):
@@ -538,14 +582,16 @@ class ListReader:
                     % (self.site_path, quote(USER_INFO_LIST), quote(person_id)),
                     'person ID %s' % person_id)
                 f = body.get('fields', {})
-                return (f.get('EMail') or f.get('Title') or '').strip() or None
+                # The display name, as SharePoint's own screen shows it. The
+                # email is only used if a person somehow has no name.
+                return (f.get('Title') or f.get('EMail') or '').strip() or None
             web_url = self.site['webUrl'].rstrip('/')
             body = self.client.get_json(
                 '%s/_api/web/getuserbyid(%d)' % (web_url, int(person_id)),
                 'person ID %s (SharePoint REST)' % person_id,
                 scope='https://%s/.default' % urlparse(web_url).netloc,
                 accept='application/json;odata=nometadata')
-            return (body.get('Email') or body.get('Title') or '').strip() or None
+            return (body.get('Title') or body.get('Email') or '').strip() or None
         except (SourceError, ValueError) as e:
             log.warning('Person ID %s not resolved: %s', person_id, e)
             return None
@@ -614,13 +660,16 @@ class SharePointSource:
     current copy until it finishes. A failed refresh keeps the last good copy
     and marks it stale."""
 
-    def __init__(self, settings, tz_name, client=None, clock=time.monotonic, background=True):
+    def __init__(self, settings, tz_name, client=None, clock=time.monotonic, background=True,
+                 saved_colors_path=PILL_COLORS_PATH):
         self.settings = settings
         self.tz = ZoneInfo(tz_name)
         self.client = client or GraphClient(TokenProvider(settings))
         self.clock = clock
         self.background = background
+        self.saved_colors_path = saved_colors_path
         self.people_cache = {}
+        self._colors_state = None
         self._data = None
         self._stale = None
         self._last_error = None
@@ -632,6 +681,11 @@ class SharePointSource:
     def from_env(cls, tz_name, env=None):
         settings = load_settings(env)
         load_certificate(settings['cert_path'], settings['cert_password'])
+        try:
+            ZoneInfo(tz_name)
+        except (KeyError, ValueError):
+            raise ConfigError('SITE_TIMEZONE is not a time zone name Python knows. Use a '
+                              'name like America/Los_Angeles.') from None
         return cls(settings, tz_name)
 
     def load(self):
@@ -669,8 +723,10 @@ class SharePointSource:
     def _refresh(self):
         started = self.clock()
         try:
-            reader = ListReader(self.client, self.settings, self.tz, self.people_cache)
+            reader = ListReader(self.client, self.settings, self.tz, self.people_cache,
+                                self.saved_colors_path)
             rows = reader.fetch()
+            self._log_colors(reader)
             data = {
                 'fields': reader.fields,
                 'assets': rows,
@@ -703,16 +759,56 @@ class SharePointSource:
                         'reason': reason,
                     }
 
+    def _log_colors(self, reader):
+        """Log where the pill colors came from, but only when that changes, so
+        a refusal that repeats every refresh is logged once."""
+        state = (reader.schema_source, reader.schema_fallback_reason,
+                 reader.saved_colors_reason,
+                 tuple(sorted((k, tuple(v)) for k, v in reader.new_choices.items())))
+        if state == self._colors_state:
+            return
+        self._colors_state = state
+        if reader.schema_source == 'SchemaXml':
+            log.info('Pill colors: read live from SharePoint (SchemaXml).')
+            return
+        reason = schema_reason(reader)
+        if reader.schema_source == 'saved':
+            log.warning('Pill colors: using the saved colors in %s, because SharePoint '
+                        'did not give the column formatting: %s',
+                        os.path.basename(reader.saved_colors_path), reason)
+            if reader.new_choices:
+                log.warning('Pill colors: these choices are not in %s and show with the '
+                            'default pill: %s', os.path.basename(reader.saved_colors_path),
+                            describe_new_choices(reader.new_choices))
+        else:
+            log.warning('Pill colors: default pills, because SharePoint did not give the '
+                        'column formatting (%s) and %s.', reason, reader.saved_colors_reason)
+
     def _view(self):
         with self._state_lock:
             return dict(self._data, stale=self._stale)
+
+
+def schema_reason(reader):
+    """Why SchemaXml was not used, with what to do about a 401 in plain words."""
+    reason = reader.schema_fallback_reason or ''
+    if reader.schema_status == 401:
+        reason += (" The app probably needs SharePoint's own Sites.Selected permission, "
+                   "in addition to the one for Microsoft Graph it already has. Once IT "
+                   "grants it, colors come live from the list with no change here.")
+    return reason
+
+
+def describe_new_choices(new_choices):
+    return '; '.join('%s: %s' % (label, ', '.join(values))
+                     for label, values in sorted(new_choices.items()))
 
 
 # ---------------------------------------------------------------------------
 # python -m sharepoint --check
 # ---------------------------------------------------------------------------
 
-def run_check(env=None, out=print, client_factory=None):
+def run_check(env=None, out=print, client_factory=None, saved_colors_path=PILL_COLORS_PATH):
     """Run every step once and print a report that is safe to paste into a
     chat: no secrets, no item contents, GET requests only. Returns 0 when
     every step passed, 1 otherwise."""
@@ -791,7 +887,7 @@ def run_check(env=None, out=print, client_factory=None):
                      'permission (for example Sites.Selected) and grant admin consent.')
     ok(steps[2], 'Signed in to Microsoft Graph as the app.', role_line)
 
-    reader = ListReader(client, settings, tz)
+    reader = ListReader(client, settings, tz, saved_colors_path=saved_colors_path)
     try:
         site = reader.read_site()
     except SourceError as e:
@@ -826,12 +922,25 @@ def run_check(env=None, out=print, client_factory=None):
 
     reader.read_schema()
     colored = sorted(f['label'] for f in reader.fields.values() if f.get('colors'))
+    saved_name = os.path.basename(reader.saved_colors_path)
     if reader.schema_source == 'SchemaXml':
-        ok(steps[7], 'From SharePoint SchemaXml. Columns with pill colors: %s.'
+        ok(steps[7], 'LIVE: from SharePoint SchemaXml. Columns with pill colors: %s.'
            % (', '.join(colored) or 'none'))
+    elif reader.schema_source == 'saved':
+        lines = ['SAVED: choices from Graph, colors from %s. Columns with pill colors: %s.'
+                 % (saved_name, ', '.join(colored) or 'none'),
+                 'Reason SharePoint SchemaXml was not used: %s' % schema_reason(reader)]
+        if reader.new_choices:
+            lines.append('Choices not in %s, shown with the default pill: %s. Run '
+                         'scripts/save_pill_colors.py on a new export to add them.'
+                         % (saved_name, describe_new_choices(reader.new_choices)))
+        else:
+            lines.append('Every choice in the list is in %s.' % saved_name)
+        ok(steps[7], *lines)
     else:
-        ok(steps[7], 'FALLBACK: choices from Graph, pills in the default style.',
-           'Reason: %s' % reader.schema_fallback_reason)
+        ok(steps[7], 'DEFAULT: choices from Graph, pills in the default style.',
+           'Reason SharePoint SchemaXml was not used: %s' % schema_reason(reader),
+           'Saved colors not used: %s.' % reader.saved_colors_reason)
 
     resolved, unresolved = reader.resolve_people()
     route = {'graph': 'Graph, User Information List', 'rest': 'SharePoint REST',

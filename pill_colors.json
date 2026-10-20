@@ -1,0 +1,288 @@
+{
+  "asset_type": {
+    "choices": [
+      "VXE-30",
+      "VXE 35 x",
+      "SGCS 1",
+      "SGCS 2",
+      "SGCS 3",
+      "Main Battery Charging Kit",
+      "HLB Charging Kit",
+      "E 140Z G2",
+      "E 95",
+      "E 180",
+      "Field Support Kit",
+      "Fuel Cell Support Kit",
+      "Student Laptop Kit",
+      "Gimbal Support Kit",
+      "Starlink",
+      "Ping 200x Transponder Kit",
+      "Mod A Kit",
+      "Wing Utility Pylon",
+      "HIL Simulator",
+      "E 140 MWIR",
+      "E 140Z G2 Dual GPS",
+      "Fuel Cell",
+      "Other",
+      "B40 HLB Charging Kit",
+      "B40 Main Charging Kit",
+      "B40 Battery",
+      "VXE-30B",
+      "Block 40",
+      "SIL Laptop"
+    ],
+    "colors": {
+      "VXE-30": {
+        "bg": "#038387",
+        "fg": "#ffffff"
+      },
+      "VXE 35 x": {
+        "bg": "#038387",
+        "fg": "#ffffff"
+      },
+      "SGCS 1": {
+        "bg": "#8e562e",
+        "fg": "#ffffff"
+      },
+      "SGCS 2": {
+        "bg": "#8e562e",
+        "fg": "#ffffff"
+      },
+      "SGCS 3": {
+        "bg": "#8e562e",
+        "fg": "#ffffff"
+      },
+      "Main Battery Charging Kit": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "HLB Charging Kit": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "E 140Z G2": {
+        "bg": "#6b47b8",
+        "fg": "#ffffff"
+      },
+      "E 95": {
+        "bg": "#6b47b8",
+        "fg": "#ffffff"
+      },
+      "E 180": {
+        "bg": "#6b47b8",
+        "fg": "#ffffff"
+      },
+      "Field Support Kit": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "Fuel Cell Support Kit": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "Student Laptop Kit": {
+        "bg": "#e1dfdd",
+        "fg": "#3b3a39"
+      },
+      "Gimbal Support Kit": {
+        "bg": "#efe4f7",
+        "fg": "#5c2e91"
+      },
+      "Starlink": {
+        "bg": "#fff1c2",
+        "fg": "#7a5400"
+      },
+      "Ping 200x Transponder Kit": {
+        "bg": "#dcf5f9",
+        "fg": "#005b70"
+      },
+      "Mod A Kit": {
+        "bg": "#dcf5f9",
+        "fg": "#005b70"
+      },
+      "Wing Utility Pylon": {
+        "bg": "#dcf5f9",
+        "fg": "#005b70"
+      },
+      "HIL Simulator": {
+        "bg": "#e1dfdd",
+        "fg": "#3b3a39"
+      },
+      "E 140 MWIR": {
+        "bg": "#6b47b8",
+        "fg": "#ffffff"
+      },
+      "E 140Z G2 Dual GPS": {
+        "bg": "#6b47b8",
+        "fg": "#ffffff"
+      },
+      "Fuel Cell": {
+        "bg": "#dcf5f9",
+        "fg": "#005b70"
+      },
+      "Other": {
+        "bg": "#e1dfdd",
+        "fg": "#3b3a39"
+      },
+      "B40 HLB Charging Kit": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "B40 Main Charging Kit": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "B40 Battery": {
+        "bg": "#605e5c",
+        "fg": "#ffffff"
+      },
+      "VXE-30B": {
+        "bg": "#038387",
+        "fg": "#ffffff"
+      },
+      "Block 40": {
+        "bg": "#038387",
+        "fg": "#ffffff"
+      },
+      "SIL Laptop": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      }
+    }
+  },
+  "location": {
+    "choices": [
+      "HSV Flight Ops",
+      "SLO Flight Ops",
+      "HSV ENG",
+      "No Verified Location",
+      "HSV LRR Internal",
+      "Global Support",
+      "SLO ENG",
+      "BD HSV"
+    ],
+    "colors": {
+      "HSV Flight Ops": {
+        "bg": "#498205",
+        "fg": "#ffffff"
+      },
+      "SLO Flight Ops": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "HSV ENG": {
+        "bg": "#0b5a0b",
+        "fg": "#ffffff"
+      },
+      "No Verified Location": {
+        "bg": "#c50f1f",
+        "fg": "#ffffff"
+      },
+      "HSV LRR Internal": {
+        "bg": "#ca5010",
+        "fg": "#ffffff"
+      },
+      "Global Support": {
+        "bg": "#f6e4e2",
+        "fg": "#8b3a33"
+      },
+      "SLO ENG": {
+        "bg": "#dcf5f9",
+        "fg": "#005b70"
+      },
+      "BD HSV": {
+        "bg": "#004e8c",
+        "fg": "#ffffff"
+      }
+    }
+  },
+  "condition": {
+    "choices": [
+      "FMC",
+      "PMC",
+      "NMC",
+      "Destroyed/Lost"
+    ],
+    "colors": {
+      "FMC": {
+        "bg": "#498205",
+        "fg": "#ffffff"
+      },
+      "PMC": {
+        "bg": "#fff1c2",
+        "fg": "#7a5400"
+      },
+      "NMC": {
+        "bg": "#c50f1f",
+        "fg": "#ffffff"
+      }
+    }
+  },
+  "ownership": {
+    "choices": [
+      "HSV Flight Ops",
+      "SLO Flight Ops",
+      "LRR",
+      "LRLE",
+      "Engineering",
+      "Business Development",
+      "SLO ENG"
+    ],
+    "colors": {
+      "HSV Flight Ops": {
+        "bg": "#498205",
+        "fg": "#ffffff"
+      },
+      "SLO Flight Ops": {
+        "bg": "#dff6dd",
+        "fg": "#0b6a0b"
+      },
+      "LRR": {
+        "bg": "#ca5010",
+        "fg": "#ffffff"
+      },
+      "LRLE": {
+        "bg": "#fde5d6",
+        "fg": "#8f3500"
+      },
+      "Engineering": {
+        "bg": "#0b5a0b",
+        "fg": "#ffffff"
+      },
+      "Business Development": {
+        "bg": "#8764b8",
+        "fg": "#ffffff"
+      },
+      "SLO ENG": {
+        "bg": "#dcf5f9",
+        "fg": "#005b70"
+      }
+    }
+  },
+  "status": {
+    "choices": [
+      "IN",
+      "OUT",
+      "RMA",
+      "BAILMENT"
+    ],
+    "colors": {
+      "IN": {
+        "bg": "#498205",
+        "fg": "#ffffff"
+      },
+      "OUT": {
+        "bg": "#a4262c",
+        "fg": "#ffffff"
+      },
+      "RMA": {
+        "bg": "#fde7e9",
+        "fg": "#a4262c"
+      },
+      "BAILMENT": {
+        "bg": "#0f6cbd",
+        "fg": "#ffffff"
+      }
+    }
+  }
+}

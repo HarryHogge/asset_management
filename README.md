@@ -67,8 +67,11 @@ only reads: it never changes anything in SharePoint.
 
 All in `.env`; `example.env` explains each one. Every one except
 `SP_REFRESH_SECONDS` is required, with no defaults. If one is missing, the
-certificate file is not there, or its password is wrong, the dashboard does
-not start and says which setting is the problem.
+certificate file is not there, or its password is wrong, the dashboard still
+starts (so PM2 does not restart it over and over), but every page says which
+setting is the problem, without showing its value. The JSON endpoints answer
+with the same message and HTTP 503. The problem is written to the log once,
+at startup. Fix `.env` and restart the dashboard.
 
 | Setting | What it is |
 |---|---|
@@ -115,12 +118,67 @@ macOS / Linux:
 
 Set `ASSET_SOURCE=sharepoint` in `.env` and restart the dashboard
 (`pm2 restart asset-management`). The line above each page then reads
-"Data from SharePoint: Asset Tracking V2, fetched <time>". If a refresh
-fails, the pages keep showing the last good copy with a warning saying how
-old it is and why the refresh failed.
+"Data from SharePoint: Asset Tracking V2, fetched <time>". Check Out By/To
+shows each person's name, as SharePoint's own screen does (the CSV export
+shows email addresses instead).
+
+If a refresh fails, the pages keep showing the last good copy with a short
+note, for example "Data is from 9:40 AM. SharePoint could not be reached;
+showing the last copy." The reason is in the log
+(`pm2 logs asset-management`), and `python -m sharepoint --check` shows it
+too. If there has never been a good copy since the dashboard started, pages
+say SharePoint could not be reached. Either way the dashboard tries again
+every minute.
 
 To go back to the CSV export, set `ASSET_SOURCE=csv` and restart. Nothing else
 needs changing; the `SP_` settings are ignored.
+
+### Pill colors
+
+The colored pills (Status, Asset Type and so on) come from the first of these
+that works, tried again at every refresh:
+
+1. **Live**, from the list's own column formatting, through SharePoint's REST
+   API. This needs the app to have SharePoint's own `Sites.Selected`
+   permission, not only Microsoft Graph's.
+2. **Saved**, from `pill_colors.json` in this folder: the colors as they were
+   in an export. A choice added to the list since then shows in the plain
+   outlined style until the file is refreshed.
+3. **Default**: every pill in the plain outlined style, if `pill_colors.json`
+   is missing or damaged.
+
+The log says which one is in use when the dashboard starts and whenever it
+changes. Step 8 of the check command says the same, and lists any choices the
+saved file does not have.
+
+`pill_colors.json` holds only column names, choice values and colors, never
+item data, names or emails.
+
+### Refreshing the saved pill colors
+
+After choices or colors change in SharePoint:
+
+1. Export the list (**Export → Export to CSV**) and save the file in
+   `exports/` (git-ignored), for example `exports/Asset Tracking V2.csv`.
+2. Run the script on it.
+
+   Windows (PowerShell):
+
+   ```
+   .venv\Scripts\python scripts\save_pill_colors.py "exports\Asset Tracking V2.csv"
+   ```
+
+   macOS / Linux:
+
+   ```
+   .venv/bin/python scripts/save_pill_colors.py "exports/Asset Tracking V2.csv"
+   ```
+
+   It prints the number of choices and colors for each column and rewrites
+   `pill_colors.json`. With no file named, it reads the committed
+   `Asset Tracking V2.csv`.
+3. Commit `pill_colors.json` (not the export) and restart the dashboard, or
+   wait for the next refresh: the file is read again at each one.
 
 ## Tests
 

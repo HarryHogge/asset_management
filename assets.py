@@ -140,6 +140,45 @@ def parse_schema_xml(xml_list):
     return fields
 
 
+def saved_colors(fields):
+    """The part of parse_schema's result that pill_colors.json keeps: for each
+    choice column, its choices in the list's order and their colors. Column
+    definitions only, never item data."""
+    return {
+        key: {'choices': list(field['choices']), 'colors': dict(field['colors'])}
+        for key, field in fields.items() if field.get('choices')
+    }
+
+
+_HEX = re.compile(r'#[0-9a-fA-F]{6}')
+
+
+def read_saved_colors(path):
+    """Read pill_colors.json (see scripts/save_pill_colors.py). Raises OSError
+    if it cannot be read and ValueError if it is not in the expected shape."""
+    with open(path, encoding='utf-8') as f:
+        try:
+            data = json.load(f)
+        except ValueError:
+            raise ValueError('it is not valid JSON') from None
+    if not isinstance(data, dict):
+        raise ValueError('it does not hold a set of columns')
+    for key, entry in data.items():
+        if key not in COLUMNS.values():
+            raise ValueError('it names a column the dashboard does not know: %s' % key)
+        if (not isinstance(entry, dict) or not isinstance(entry.get('choices'), list)
+                or not isinstance(entry.get('colors'), dict)):
+            raise ValueError('column %s needs "choices" and "colors"' % key)
+        if not all(isinstance(c, str) for c in entry['choices']):
+            raise ValueError('column %s has a choice that is not text' % key)
+        for style in entry['colors'].values():
+            if not (isinstance(style, dict)
+                    and all(isinstance(style.get(p), str) and _HEX.fullmatch(style[p])
+                            for p in ('bg', 'fg'))):
+                raise ValueError('column %s has a color that is not like #a1b2c3' % key)
+    return data
+
+
 def _to_local_date(value, tz):
     """SharePoint exports dates as UTC instants of local midnight
     (2026-10-02T07:00:00Z is 10/2 in Pacific time). Convert back to the

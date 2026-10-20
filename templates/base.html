@@ -293,17 +293,15 @@
     </div>
 
     <div class="content">
+        {% if source %}
         <p class="source-note">
             Data from <strong>{{ source }}</strong>, {{ 'fetched' if live else 'exported' }} {{ loaded_at | mdy_time }}.
             Times and dates are in the SharePoint site's time zone.
         </p>
+        {% endif %}
         {% if stale %}
-        <div class="stale-banner" role="alert">
-            <strong>This data is out of date.</strong>
-            It was fetched {{ stale.since | mdy_time }}. The last attempt to refresh it,
-            at {{ stale.failed_at | mdy_time }}, failed: {{ stale.reason }}
-            The dashboard tries again every {{ refresh_minutes }} minute{{ '' if refresh_minutes == 1 else 's' }}.
-        </div>
+        {# Short on purpose: the technical reason is in the log, not on the page. #}
+        <div class="stale-banner" role="alert">Data is from {{ stale.since | short_time }}. SharePoint could not be reached; showing the last copy.</div>
         {% endif %}
         {% block content %}{% endblock %}
     </div>
