@@ -223,6 +223,74 @@ Open `http://localhost:5070`. It should look exactly as before: same rows, and t
 
 It runs once and exits. It does not touch the running dashboard. It makes only read requests to Microsoft, and prints no passwords, IDs or list contents.
 
-**Paste the whole output back into the session.** Each step says `[OK]`, `[WARN]` or `[FAIL]`, and a failure says which step failed and why. Whatever it says, leave `ASSET_SOURCE=csv` for now; the switch-over comes after we have read the output together.
+**Paste the whole output back into the session.** Each step says `[OK]`, `[FAILED]` or `[--]` (not run, because an earlier step failed), and a failure says which step failed and why. Whatever it says, leave `ASSET_SOURCE=csv` for now; the switch-over comes after we have read the output together.
 
 If the check itself crashes with a Python error instead of printing its steps, paste that too.
+
+## Part D: Switch the live dashboard to SharePoint
+
+Do this after the Part C check has passed. Switching back takes one line and a restart (D5).
+
+### D1. Pull the new code
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git pull
+git log --oneline -1
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+`git log` should show `Add PROD runbook Part D` or something newer. There are no new packages, so `pip` should only say `Requirement already satisfied`.
+
+### D2. Run the check again on the new code
+
+```powershell
+.venv\Scripts\python -m sharepoint --check
+```
+
+It should end with `RESULT: every step passed.` Step 8 should now say `SAVED` (colors from `pill_colors.json`) instead of plain pills. Once IT adds the SharePoint permission, it will say `LIVE`. If any step fails, stop here and paste the output.
+
+### D3. Switch
+
+```powershell
+notepad .env
+```
+
+Change `ASSET_SOURCE=csv` to `ASSET_SOURCE=sharepoint`, save, then:
+
+```powershell
+pm2 restart asset-management
+```
+
+### D4. Check it
+
+Open `http://localhost:5070`. The first page takes a few seconds while it fetches the list, then:
+
+- the line above the table reads `Data from SharePoint: Asset Tracking V2, fetched <date and time>`;
+- there is no yellow note box;
+- Inventory shows 146 rows (or the current count in SharePoint), with pills in the same colors as before;
+- Check Out By/To shows **names**, not email addresses, on Inventory and on Checkouts;
+- Checkouts has no `(unknown person, ID n)` entries;
+- Needs Attention and Metrics show the same groups and totals as before, apart from any edits made in SharePoint since the last CSV export.
+
+Then look at the log:
+
+```powershell
+pm2 logs asset-management --lines 30 --nostream
+```
+
+Expect:
+
+- `Data source: SharePoint list Asset Tracking V2, refreshed every 300 seconds`;
+- `SharePoint refresh OK: 146 items`;
+- one `Pill colors: using the saved colors in pill_colors.json ...` line mentioning HTTP 401. That line is expected until IT adds the permission, and should not repeat every 5 minutes.
+
+Last, edit something harmless in the SharePoint list, such as an Asset Notes field. Within 5 minutes, reloading the dashboard should show the change.
+
+### D5. Switch back, if anything is wrong
+
+Set `ASSET_SOURCE=csv` in `.env`, then run `pm2 restart asset-management`. The dashboard goes back to the CSV, with email addresses and the word `exported`. Paste what you saw, and the log lines, into the session.
+
+### D6. When IT adds the SharePoint permission
+
+Nothing to change. Run the check again: step 8 should say `LIVE`. The dashboard picks it up at its next refresh, and logs `Pill colors: read live from SharePoint` once.
