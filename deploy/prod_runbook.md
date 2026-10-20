@@ -3,7 +3,7 @@
 Runs on: PROD (Windows), in PowerShell, as `slovett`.
 App: the asset tracking dashboard, read from a SharePoint CSV export. Port 5070. PM2 name `asset-management`.
 
-This version has no secrets. The SharePoint API key and certificate are not used yet.
+Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection.
 
 Run the commands one block at a time and check each result before going on.
 
@@ -15,7 +15,7 @@ Run the commands one block at a time and check each result before going on.
 python --version
 ```
 
-Needs 3.9 or later. Any version the other Python services already run on is fine.
+Needs 3.10 or later. The SharePoint packages (report 03) do not install on 3.9.
 
 ### A2. Clone the repo next to the other apps
 
@@ -148,3 +148,81 @@ pm2 restart asset-management
 ```
 
 To take it off PROD altogether: `pm2 delete asset-management`, then `pm2 save`.
+
+## Part C: SharePoint connection test
+
+Goal: put the certificate and settings on PROD and run the connection check, while the dashboard people use **stays on the CSV**. Nothing here switches the live app to SharePoint.
+
+You need from IT: the tenant ID, client ID, FLOPS site ID, the `.pfx` file and its password. Never paste any of them into a chat or a commit.
+
+### C1. Put the certificate in its own folder
+
+Outside the repo, readable only by you, SYSTEM and administrators:
+
+```powershell
+mkdir C:\Users\slovett\certs
+icacls C:\Users\slovett\certs /inheritance:r /grant:r "slovett:(OI)(CI)F" "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F"
+```
+
+Copy the `.pfx` into that folder, then check it is there:
+
+```powershell
+Get-ChildItem C:\Users\slovett\certs
+```
+
+### C2. Pull the new code
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git pull
+git log --oneline -1
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+`git log` should show `Add PROD runbook Part C and decisions` or something newer. `pip` should end with `Successfully installed ...` (msal, cryptography and others) and no red errors.
+
+### C3. Add the SharePoint settings to `.env`
+
+Your `.env` was copied before these settings existed. Open it:
+
+```powershell
+notepad .env
+```
+
+Add these lines at the end and fill in the values. Write them **without double quotes**: inside double quotes a backslash is read as a special character, and `\n` in a path would become a line break.
+
+```
+ASSET_SOURCE=csv
+SP_TENANT_ID=<tenant ID>
+SP_CLIENT_ID=<client ID>
+SP_SITE_ID=<FLOPS site ID>
+SP_LIST_NAME=Asset Tracking V2
+SP_CERT_PATH=C:\Users\slovett\certs\<file name>.pfx
+SP_CERT_PASSWORD=<pfx password>
+SP_REFRESH_SECONDS=300
+```
+
+If the password contains a space, `#` or a quote, put it in single quotes: `SP_CERT_PASSWORD='...'`.
+
+Leave `ASSET_SOURCE=csv`. That keeps the live dashboard on the CSV.
+
+### C4. Restart on the new code, still on CSV
+
+```powershell
+pm2 restart asset-management
+pm2 logs asset-management --lines 20 --nostream
+```
+
+Open `http://localhost:5070`. It should look exactly as before: same rows, and the line above the table still says `exported`.
+
+### C5. Run the connection check
+
+```powershell
+.venv\Scripts\python -m sharepoint --check
+```
+
+It runs once and exits. It does not touch the running dashboard. It makes only read requests to Microsoft, and prints no passwords, IDs or list contents.
+
+**Paste the whole output back into the session.** Each step says `[OK]`, `[WARN]` or `[FAIL]`, and a failure says which step failed and why. Whatever it says, leave `ASSET_SOURCE=csv` for now; the switch-over comes after we have read the output together.
+
+If the check itself crashes with a Python error instead of printing its steps, paste that too.
