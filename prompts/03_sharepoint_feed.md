@@ -10,7 +10,7 @@ Read `CLAUDE.md` first, then `assets.py` and `app.py`.
 
 The dashboard reads a CSV export of the SharePoint list. This prompt adds a second source: the list itself, read live through Microsoft Graph. The CSV source stays and remains the default.
 
-The sandbox has no credentials and must not get any. Build and test everything against made-up responses. Prompt 04 will run the real connection on the local machine.
+The sandbox cannot reach SharePoint, and has no credentials and must not get any. Build and test everything against made-up responses. The first real connection will happen on the PROD Windows server, through a runbook Scott carries out. So the code must be right on Windows the first time, and the check command (step 5) must tell us everything we need from one run.
 
 What Scott has from IT, for an Entra app registration:
 
@@ -79,9 +79,15 @@ New module, for example `sharepoint.py`. Make only GET requests.
 - If a refresh fails after a good fetch, keep serving the last good copy. Show on every page that it is stale, since when, and why, in plain words. If there has never been a good fetch, the page shows the error, not an empty table.
 - Log every failure with its cause. Logs must never contain tokens, the certificate password, or list contents.
 
-### 5. A connection check for prompt 04
+### 5. A connection check for the first PROD run
 
-A command, for example `python -m sharepoint --check`, that runs the whole path once and prints a short report:
+A command, for example `python -m sharepoint --check`, that runs the whole path once and prints a short report. Scott will run it on PROD while the live app keeps serving the CSV, then paste its output back here, so:
+
+- it must run on its own, reading `.env` but ignoring `ASSET_SOURCE`, without starting the web server or touching the running app;
+- when a step fails, it says which step failed and the cause in plain words (for example: sign-in refused, certificate password wrong, permission missing, site not found, list not found), and still reports the steps before it;
+- its output must be safe to paste into a chat.
+
+It prints:
 
 - whether sign-in worked;
 - the Graph permissions in the token, by name only, read from the token's `roles` claim;
@@ -90,7 +96,7 @@ A command, for example `python -m sharepoint --check`, that runs the whole path 
 - whether choices and colors came from `SchemaXml` or from the fallback;
 - how many Check Out By/To IDs were resolved and how many were not.
 
-It prints no secrets and no item contents, and makes only GET requests. Make sure it can be run the same way on Windows.
+It prints no secrets and no item contents, and makes only GET requests. It must run in Windows PowerShell as `.venv\Scripts\python -m sharepoint --check`.
 
 ### 6. Tests
 
@@ -118,6 +124,6 @@ Add a section on the SharePoint source: the settings, where the certificate goes
 - The branch and the commit the work started from.
 - What changed, file by file.
 - Each technical choice (formatter source, Person lookup route, refresh time, row IDs) and its practical consequence.
-- What prompt 04 must confirm against the real list, as a checklist.
+- What the first PROD run must confirm against the real list, as a checklist. Scott will run the check command there; list what to look for in its output.
 - Test results, including the `PYTHONTZPATH=""` run.
 - Any question that needs Scott's decision.
