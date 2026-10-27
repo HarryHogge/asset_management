@@ -53,6 +53,24 @@ COLUMNS = {
     'Shelf Location': 'shelf_location',
     'Last Inventory': 'last_inventory',
 }
+# Each column's internal name in SharePoint, from the list's schema. Anyone
+# can rename a column's display name in the list ("Asset Type" became
+# "Assets"), but the internal name never changes. Columns are found by display
+# name first and by this name if that fails, so a rename does not blank them.
+INTERNAL_NAMES = {
+    'Part Number': 'PartNumber',
+    'Asset Type': 'AssetType',
+    'Serial Number': 'SerialNumber',
+    'Ownership': 'Ownership',
+    'Status': 'Status',
+    'Location': 'OwnershipandLocation',
+    'Material Condition': 'MaterialCondition',
+    'Date Out': 'DateOut',
+    'Check Out By/To': 'CheckOutBy_x002f_To',
+    'Asset Notes': 'AssetNotes',
+    'Shelf Location': 'ShelfLocation',
+    'Last Inventory': 'LastInventory',
+}
 MULTI_CHOICE = {'status', 'location'}
 DATES = {'date_out', 'last_inventory'}
 # Text the export pads with tabs, newlines or trailing spaces.
@@ -108,23 +126,58 @@ def _pill_colors(formatter):
     return colors
 
 
+def _schema_payload(line):
+    return json.loads(line.split('=', 1)[1]).get('schemaXmlList', [])
+
+
 def parse_schema(line):
     """Parse the `ListSchema=` line into {key: {label, type, choices, colors}}."""
-    payload = json.loads(line.split('=', 1)[1])
-    return parse_schema_xml(payload.get('schemaXmlList', []))
+    return parse_schema_xml(_schema_payload(line))
+
+
+def _schema_headers(elements):
+    """Which column definition is which dashboard column, as {id(element):
+    header}. By display name first, as before; then, for a column with no
+    display name match, by its internal name."""
+    chosen = {}
+    for el in elements:
+        if el.get('DisplayName') in COLUMNS:
+            chosen[el.get('DisplayName')] = el
+    by_internal = {name: header for header, name in INTERNAL_NAMES.items()}
+    for el in elements:
+        header = by_internal.get(el.get('Name'))
+        if header and header not in chosen:
+            chosen[header] = el
+    return {id(el): header for header, el in chosen.items()}
+
+
+def renamed_columns(xml_list):
+    """{display name now in the list: dashboard header} for each column found
+    only by its internal name, for example {'Assets': 'Asset Type'}."""
+    elements = [ElementTree.fromstring(xml) for xml in xml_list]
+    headers = _schema_headers(elements)
+    renamed = {}
+    for el in elements:
+        header = headers.get(id(el))
+        if header and el.get('DisplayName') != header:
+            renamed[el.get('DisplayName')] = header
+    return renamed
 
 
 def parse_schema_xml(xml_list):
     """Turn SharePoint column XML (one <Field .../> string per column) into
     {key: {label, type, choices, colors}}. The CSV export's schema line and
-    SharePoint's REST `SchemaXml` hold the same XML, so both sources use this."""
+    SharePoint's REST `SchemaXml` hold the same XML, so both sources use this.
+    A column renamed in the list is found by its internal name and keeps the
+    dashboard's label."""
+    elements = [ElementTree.fromstring(xml) for xml in xml_list]
+    headers = _schema_headers(elements)
     fields = {}
-    for xml in xml_list:
-        el = ElementTree.fromstring(xml)
-        label = el.get('DisplayName')
-        key = COLUMNS.get(label)
-        if not key:
+    for el in elements:
+        label = headers.get(id(el))
+        if not label:
             continue
+        key = COLUMNS[label]
         choices = []
         for c in el.iter('CHOICE'):
             if c.text and c.text not in choices:
@@ -237,14 +290,20 @@ def load(path, tz_name):
         with open(path, encoding='utf-8-sig', newline='') as f:
             first = f.readline()
             if first.startswith('ListSchema='):
-                fields = parse_schema(first)
+                xml_list = _schema_payload(first)
+                fields = parse_schema_xml(xml_list)
+                # A column renamed in the list has its new name as the CSV
+                # header; read it under the dashboard's header.
+                renamed = renamed_columns(xml_list)
             else:
                 # A plain export with no schema line: rewind and read it as CSV.
                 fields = {}
+                renamed = {}
                 f.seek(0)
             # The export has no SharePoint item ID and serial numbers repeat,
             # so the row position is the only stable key within one file.
-            assets = [_clean_row(r, tz, i + 1) for i, r in enumerate(csv.DictReader(f))]
+            assets = [_clean_row({renamed.get(h, h): v for h, v in r.items()}, tz, i + 1)
+                      for i, r in enumerate(csv.DictReader(f))]
         data = {
             'fields': fields,
             'assets': assets,

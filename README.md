@@ -114,6 +114,20 @@ macOS / Linux:
 .venv/bin/python -m sharepoint --check
 ```
 
+Run it from the dashboard's folder; elsewhere Python answers "No module
+named sharepoint".
+
+### Renamed columns
+
+Anyone can rename a column in the list. The dashboard finds each column by
+its display name, and if that fails, by its internal name, which SharePoint
+never changes (for example "Asset Type" was renamed "Assets"; its internal
+name is still `AssetType`). The dashboard keeps its own label, and the log
+says once: "Column Asset Type was found by its internal name AssetType;
+SharePoint now calls it "Assets"." The check command prints the same as a
+NOTE under step 6. A column that cannot be found either way still shows
+blank, with a WARNING in the check and in the log.
+
 ### Switching over, and back
 
 Set `ASSET_SOURCE=sharepoint` in `.env` and restart the dashboard

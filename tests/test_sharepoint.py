@@ -9,7 +9,7 @@ import app as dashboard
 import assets as asset_data
 import sharepoint
 from fake_sharepoint import (FakeClock, FakeSharePoint, FakeTokens, LIST_NAME, fake_env,
-                             make_item, schema_xml)
+                             make_item, renamed_columns, renamed_schema_xml, schema_xml)
 
 TZ = ZoneInfo('America/Los_Angeles')
 PEOPLE = {
@@ -67,6 +67,67 @@ def test_internal_names_come_from_the_column_definitions(pfx):
     assert row['part_number'] == 'PN-0001'
     assert row['shelf_location'] == 'Shelf 1'
     assert reader.missing_columns == []
+
+
+def test_a_renamed_column_is_found_by_its_internal_name(pfx, tmp_path):
+    """Someone renamed "Asset Type" to "Assets" in the list (it happened on
+    PROD). Its internal name is still AssetType, so it must not go blank."""
+    fake = FakeSharePoint(sample_items(2), people=PEOPLE, schema=401,
+                          columns=renamed_columns('Asset Type', 'Assets'))
+    reader = reader_for(fake, pfx)
+    reader.saved_colors_path = write_saved(tmp_path, {
+        'asset_type': {'choices': ['VXE-30'], 'colors': {'VXE-30': GREEN}}})
+    rows = reader.fetch()
+    assert reader.mapping['Asset Type'] == 'AssetType'
+    assert reader.renamed == {'Asset Type': 'Assets'}
+    assert reader.missing_columns == []
+    assert [r['asset_type'] for r in rows] == ['VXE-30', 'VXE-30']
+    # Choices and saved colors still attach, under the dashboard's label.
+    assert reader.fields['asset_type']['label'] == 'Asset Type'
+    assert reader.fields['asset_type']['choices'] == ['VXE-30', 'SGCS 1', 'Field Support Kit']
+    assert reader.fields['asset_type']['colors'] == {'VXE-30': GREEN}
+
+
+def test_a_renamed_column_keeps_its_live_choices_from_schemaxml(pfx):
+    fake = FakeSharePoint(sample_items(1), people=PEOPLE,
+                          columns=renamed_columns('Asset Type', 'Assets'),
+                          schema=renamed_schema_xml('Asset Type', 'Assets'))
+    reader = reader_for(fake, pfx)
+    rows = reader.fetch()
+    assert reader.schema_source == 'SchemaXml'
+    assert reader.fields['asset_type']['label'] == 'Asset Type'
+    assert reader.fields['asset_type']['choices'] == ['VXE-30', 'SGCS 1', 'Field Support Kit']
+    assert rows[0]['asset_type'] == 'VXE-30'
+
+
+def test_a_display_name_match_wins_over_an_internal_name_match(pfx):
+    """If a new column takes the name "Asset Type", that is the one used."""
+    columns = renamed_columns('Asset Type', 'Old Asset Type') + [
+        {'name': 'AssetType0', 'displayName': 'Asset Type', 'choice': {'choices': ['New']}}]
+    item = make_item(100, 'SN-TEST-000')
+    item['fields']['AssetType0'] = 'New'
+    reader = reader_for(FakeSharePoint([item], people=PEOPLE, columns=columns), pfx)
+    rows = reader.fetch()
+    assert reader.mapping['Asset Type'] == 'AssetType0'
+    assert reader.renamed == {}
+    assert rows[0]['asset_type'] == 'New'
+
+
+def test_a_renamed_column_is_logged_once_not_at_every_refresh(pfx, caplog):
+    fake = FakeSharePoint(sample_items(1), people=PEOPLE,
+                          columns=renamed_columns('Asset Type', 'Assets'))
+    clock = FakeClock()
+    source = source_for(fake, pfx, clock=clock)
+    with caplog.at_level(logging.INFO, logger='asset_management.sharepoint'):
+        for _ in range(3):
+            data = source.load()
+            clock.advance(301)
+    assert data['assets'][0]['asset_type'] == 'VXE-30'
+    renamed = [r for r in caplog.records if 'found by its internal name' in r.getMessage()]
+    assert len(renamed) == 1
+    assert ('Column Asset Type was found by its internal name AssetType; SharePoint now calls '
+            'it "Assets". The dashboard still shows it as Asset Type.') == renamed[0].getMessage()
+    assert 'has no column named' not in caplog.text
 
 
 def test_rows_have_the_same_keys_and_types_as_csv_rows(pfx):
@@ -474,6 +535,18 @@ def test_check_reports_every_step_without_secrets_or_contents(pfx):
                    'made-up note', 'client-made-up-0002', 'tenant-made-up-0001']:
         assert secret not in text
     assert all(c.startswith('https://') for c in fake.calls)
+
+
+def test_check_notes_a_renamed_column_instead_of_warning(pfx):
+    fake = FakeSharePoint(sample_items(1), people=PEOPLE,
+                          columns=renamed_columns('Asset Type', 'Assets'))
+    code, text, _ = run_check(fake, pfx)
+    assert code == 0, text
+    assert 'Assets | AssetType | choice' in text
+    assert ('NOTE: Asset Type was found by its internal name AssetType; SharePoint now calls '
+            'it "Assets". The dashboard still shows it as Asset Type.') in text
+    assert 'All 12 columns the dashboard uses were found.' in text
+    assert 'WARNING' not in text
 
 
 def test_check_says_which_step_failed_and_keeps_earlier_steps(pfx):

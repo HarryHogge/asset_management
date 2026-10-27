@@ -9,7 +9,9 @@ How a fetch works, in order:
 1. Sign in as the app (no user) with the certificate, using MSAL.
 2. Look up the site (SP_SITE_ID) and find the list by name (SP_LIST_NAME).
 3. Read the list's column definitions, to map each column's display name
-   ("Serial Number") to the internal name Graph uses ("SerialNumber").
+   ("Serial Number") to the internal name Graph uses ("SerialNumber"). A
+   column renamed in the list ("Asset Type" is now "Assets") is found by its
+   internal name instead and keeps the dashboard's label.
 4. Read every item, page by page, until Graph says there are no more.
 5. Read the choice values and pill colors. Graph does not return SharePoint's
    column formatting, so these come from SharePoint's own REST API
@@ -365,6 +367,7 @@ class ListReader:
         self.list = None
         self.columns = []
         self.mapping = {}
+        self.renamed = {}
         self.items = []
         self.item_pages = 0
         self.fields = {}
@@ -406,10 +409,23 @@ class ListReader:
     def read_columns(self):
         self.columns, _ = self.client.get_all(self.list_path + '/columns', 'the list columns')
         by_display = {}
+        by_internal = {}
         for col in self.columns:
             by_display.setdefault((col.get('displayName') or '').strip(), col)
-        # Display name -> internal name, from the list's own definitions.
-        self.mapping = {h: by_display[h]['name'] for h in asset_data.COLUMNS if h in by_display}
+            by_internal.setdefault(col.get('name'), col)
+        # Display name -> internal name, from the list's own definitions. A
+        # column with no display name match is looked up by its internal name,
+        # which does not change when someone renames the column in the list.
+        self.mapping = {}
+        self.renamed = {}
+        for header in asset_data.COLUMNS:
+            col = by_display.get(header)
+            if col is None:
+                col = by_internal.get(asset_data.INTERNAL_NAMES[header])
+                if col is not None:
+                    self.renamed[header] = (col.get('displayName') or '').strip()
+            if col is not None:
+                self.mapping[header] = col['name']
         missing = [h for h in asset_data.COLUMNS if h not in self.mapping]
         if missing:
             log.warning('SharePoint list has no column named: %s', ', '.join(missing))
@@ -670,6 +686,7 @@ class SharePointSource:
         self.saved_colors_path = saved_colors_path
         self.people_cache = {}
         self._colors_state = None
+        self._renamed_state = {}
         self._data = None
         self._stale = None
         self._last_error = None
@@ -726,6 +743,7 @@ class SharePointSource:
             reader = ListReader(self.client, self.settings, self.tz, self.people_cache,
                                 self.saved_colors_path)
             rows = reader.fetch()
+            self._log_renamed(reader)
             self._log_colors(reader)
             data = {
                 'fields': reader.fields,
@@ -758,6 +776,17 @@ class SharePointSource:
                         'failed_at': datetime.now(self.tz),
                         'reason': reason,
                     }
+
+    def _log_renamed(self, reader):
+        """Log columns found by their internal name, once per rename rather
+        than at every refresh."""
+        if reader.renamed == self._renamed_state:
+            return
+        self._renamed_state = dict(reader.renamed)
+        for header, now in reader.renamed.items():
+            log.warning('Column %s was found by its internal name %s; SharePoint now calls it '
+                        '"%s". The dashboard still shows it as %s.',
+                        header, reader.mapping[header], now, header)
 
     def _log_colors(self, reader):
         """Log where the pill colors came from, but only when that changes, so
@@ -907,6 +936,10 @@ def run_check(env=None, out=print, client_factory=None, saved_colors_path=PILL_C
     lines = ['%d columns (display name | internal name | type):' % len(reader.columns)]
     for col in reader.columns:
         lines.append('  %s | %s | %s' % (col.get('displayName'), col.get('name'), column_type(col)))
+    for header, now in reader.renamed.items():
+        lines.append('NOTE: %s was found by its internal name %s; SharePoint now calls it "%s". '
+                     'The dashboard still shows it as %s.'
+                     % (header, reader.mapping[header], now, header))
     if reader.missing_columns:
         lines.append('WARNING: the dashboard uses these columns but the list has none by '
                      'that name: %s. They will show blank.' % ', '.join(reader.missing_columns))

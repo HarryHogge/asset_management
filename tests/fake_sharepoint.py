@@ -73,6 +73,24 @@ GRAPH_COLUMNS = [
 ]
 
 
+def renamed_columns(header, new_display_name):
+    """GRAPH_COLUMNS with one column's display name changed, as when someone
+    renames a column in the list. Its internal name stays the same."""
+    return [dict(c, displayName=new_display_name) if c['displayName'] == header else c
+            for c in GRAPH_COLUMNS]
+
+
+def renamed_schema_xml(header, new_display_name):
+    """schema_xml() with one column's display name changed."""
+    out = []
+    for xml in schema_xml():
+        el = ElementTree.fromstring(xml)
+        if el.get('DisplayName') == header:
+            el.set('DisplayName', new_display_name)
+        out.append(ElementTree.tostring(el, encoding='unicode'))
+    return out
+
+
 def make_item(item_id, serial, asset_type='VXE-30', status=('IN',), location=('Test Bay A',),
               condition='FMC', owner='Team Alpha', date_out=None, person=None,
               last_inventory=None, notes='', part='', shelf=''):
@@ -129,8 +147,9 @@ class FakeSharePoint:
     It has no way to answer anything but GET."""
 
     def __init__(self, items, page_size=200, people=None, schema=True,
-                 user_list_in_graph=True, list_name=LIST_NAME):
+                 user_list_in_graph=True, list_name=LIST_NAME, columns=None):
         self.items = items
+        self.columns = GRAPH_COLUMNS if columns is None else columns
         self.page_size = page_size
         self.people = people or {}
         self.schema = schema_xml() if schema is True else schema
@@ -182,7 +201,7 @@ class FakeSharePoint:
                 {'id': LIST_ID, 'displayName': self.list_name, 'name': 'AssetTrackingV2'},
             ]})
         if rest == '/lists/%s/columns' % LIST_ID:
-            return FakeResponse(200, {'value': GRAPH_COLUMNS})
+            return FakeResponse(200, {'value': self.columns})
         if rest == '/lists/%s/items' % LIST_ID:
             start = int(query.get('$skiptoken', ['0'])[0])
             page = self.items[start:start + self.page_size]

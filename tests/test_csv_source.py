@@ -19,3 +19,21 @@ def test_csv_source_gives_the_same_rows_as_before():
     assert hashlib.sha256(rows.encode('utf-8')).hexdigest() == ROWS_SHA256
     assert hashlib.sha256(fields.encode('utf-8')).hexdigest() == FIELDS_SHA256
     assert data.get('stale') is None
+
+
+def test_an_export_with_a_renamed_column_reads_the_same(tmp_path):
+    """An export taken after "Asset Type" was renamed to "Assets" in the list:
+    the schema line and the CSV header both say "Assets". Built from the
+    committed export, so no new list data is added to the repository."""
+    with open(dashboard.ASSET_CSV, encoding='utf-8-sig', newline='') as f:
+        schema, header, rest = f.readline(), f.readline(), f.read()
+    assert 'DisplayName=\\"Asset Type\\"' in schema and ',"Asset Type",' in header
+    renamed = tmp_path / 'renamed.csv'
+    renamed.write_text(schema.replace('DisplayName=\\"Asset Type\\"', 'DisplayName=\\"Assets\\"')
+                       + header.replace(',"Asset Type",', ',"Assets",') + rest,
+                       encoding='utf-8', newline='')
+    original = dashboard.CsvSource(dashboard.ASSET_CSV, 'America/Los_Angeles').load()
+    data = asset_data.load(str(renamed), 'America/Los_Angeles')
+    assert [a['asset_type'] for a in data['assets']] == [a['asset_type'] for a in original['assets']]
+    assert sum(1 for a in data['assets'] if a['asset_type']) > 100
+    assert data['fields']['asset_type'] == original['fields']['asset_type']
