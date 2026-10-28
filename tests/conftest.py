@@ -1,4 +1,14 @@
+import atexit
 import os
+import shutil
+import tempfile
+
+# Every page load may add a line to the readiness history. Keep that file out
+# of the repo folder: point READINESS_HISTORY at a temporary folder before the
+# app is imported. Tests of the history itself use their own tmp_path.
+_history_dir = tempfile.mkdtemp(prefix='asset-tests-')
+atexit.register(shutil.rmtree, _history_dir, ignore_errors=True)
+os.environ['READINESS_HISTORY'] = os.path.join(_history_dir, 'readiness_history.jsonl')
 
 # The app reads ASSET_SOURCE when it is imported. Tests always start from the
 # CSV source and swap in a fake SharePoint source where they need one, so a

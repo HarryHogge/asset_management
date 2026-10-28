@@ -15,6 +15,7 @@ Needs Python 3.10 or later.
 
 | Page | What it shows |
 |---|---|
+| `/overview` Fleet Overview | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the first data problems, and a 7-day readiness trend. Filter by Location with `?location=...` |
 | `/` Inventory | Every asset, with filters, sorting, and Excel export of what's shown |
 | `/attention` | Data problems: OUT with no holder or date, checked out but not OUT, no status, never/overdue inventory, PMC/NMC with no notes |
 | `/checkouts` | Who has what, and for how long |
@@ -194,9 +195,41 @@ After choices or colors change in SharePoint:
 3. Commit `pill_colors.json` (not the export) and restart the dashboard, or
    wait for the next refresh: the file is read again at each one.
 
+## Fleet Overview
+
+### Readiness
+
+Material Condition decides readiness: FMC is Ready (green), PMC is Limited
+(yellow), NMC is Not Ready (red). Destroyed/Lost is shown in gray and left
+out. Readiness % = FMC / (all assets minus Destroyed/Lost). An asset with a
+blank condition stays in the total as "No condition", so it lowers the
+percentage. With nothing to divide by, the page shows a dash.
+
+### Asset families
+
+`asset_families.json` in this folder places each Asset Type in Aircraft,
+Ground Control Station, Payload or Support. The match is on the exact text.
+A type the file does not name, or a blank one, shows as **Unmapped**, and the
+Support and Unmapped card lists those types. To place a new type, add a line
+to the file, for example `"New Kit": "Support",`, and commit it. The file is
+read at each page view, so no restart is needed. If the file is missing or
+damaged, every asset shows as Unmapped, the page says so, and the log gives
+the reason.
+
+### The readiness history
+
+The first good data load of each day, on any page, adds one line to the file
+named by `READINESS_HISTORY` (default `data/readiness_history.jsonl`, which
+git ignores). The Readiness Trend chart reads it, so it fills in one point
+per day. A SharePoint copy is only recorded when it is fresh: not stale, and
+fetched that day. A CSV export is recorded as it is. If the line cannot be
+written, the pages still load, the overview shows a short note and the log
+gives the reason.
+
 ## Tests
 
-The tests use made-up Microsoft replies and never touch the network.
+The tests use made-up Microsoft replies and never touch the network. They
+write the readiness history to a temporary folder, never to `data/`.
 
 Windows (PowerShell):
 

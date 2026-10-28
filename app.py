@@ -7,6 +7,7 @@ import logging
 import os
 
 import assets as asset_data
+import fleet
 import sharepoint
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +32,10 @@ SITE_TIMEZONE = os.getenv('SITE_TIMEZONE', 'America/Los_Angeles')
 INVENTORY_STALE_DAYS = int(os.getenv('INVENTORY_STALE_DAYS', '90'))
 # Not 5060/5061: those are SIP ports and Chrome refuses to open them.
 PORT = int(os.getenv('PORT', '5070'))
+# One line per day of readiness numbers, for the Fleet Overview trend.
+READINESS_HISTORY = os.getenv('READINESS_HISTORY', os.path.join('data', 'readiness_history.jsonl'))
+if not os.path.isabs(READINESS_HISTORY):
+    READINESS_HISTORY = os.path.join(BASE_DIR, READINESS_HISTORY)
 
 
 class CsvSource:
@@ -73,8 +78,11 @@ def make_source(name, env=None):
 
 
 SOURCE = make_source(os.getenv('ASSET_SOURCE'))
+FAMILIES = fleet.FamilyMap()
+HISTORY = fleet.ReadinessHistory(READINESS_HISTORY)
 
 PAGES = [
+    ('overview', '/overview', 'Fleet Overview'),
     ('inventory', '/', 'Inventory'),
     ('attention', '/attention', 'Needs Attention'),
     ('checkouts', '/checkouts', 'Checkouts'),
@@ -88,7 +96,7 @@ def today():
 
 def load():
     try:
-        return SOURCE.load()
+        data = SOURCE.load()
     except FileNotFoundError:
         abort(503, description='Asset export not found: %s (set ASSET_CSV in .env)'
               % os.path.basename(ASSET_CSV))
@@ -101,6 +109,10 @@ def load():
         abort(503, description='SharePoint could not be reached, and there is no earlier '
               'copy of the asset list to show. The dashboard tries again every minute, '
               'so reload this page shortly. The reason is in the dashboard log.')
+    # The first good load of each day adds that day's line to the readiness
+    # history. It never raises: a failed write is logged and noted on /overview.
+    HISTORY.record(data, FAMILIES, datetime.now(ZoneInfo(SITE_TIMEZONE)))
+    return data
 
 
 @app.errorhandler(503)
@@ -157,6 +169,33 @@ def render(template, active, data, **kwargs):
         stale=data.get('stale'),
         **kwargs,
     )
+
+
+@app.route('/overview')
+def overview():
+    data = load()
+    mapping, mapping_problem = FAMILIES.load()
+    location = request.args.get('location', '')
+    assets = fleet.filter_location(data['assets'], location)
+    locations, any_without = fleet.location_options(data['assets'], data['fields'])
+    groups = asset_data.attention(assets, today(), INVENTORY_STALE_DAYS)
+    alert_rows, problem_count = fleet.alerts(groups)
+    # The trend is fleet-wide: it comes from the history, not the filter.
+    trend = fleet.trend(HISTORY.entries(), today())
+    return render('overview.html', 'overview', data,
+                  left_nav=True,
+                  location=location,
+                  no_location=fleet.NO_LOCATION,
+                  locations=locations,
+                  any_without_location=any_without,
+                  ready=fleet.fleet_readiness(assets, mapping),
+                  tables=[(f, fleet.table_rows(assets, mapping, f)) for f in fleet.MAIN_FAMILIES],
+                  unmapped=fleet.unmapped_types(assets, mapping),
+                  mapping_problem=mapping_problem,
+                  history_problem=HISTORY.problem,
+                  alert_rows=alert_rows,
+                  problem_count=problem_count,
+                  trend=trend)
 
 
 @app.route('/')
@@ -293,6 +332,7 @@ if __name__ == '__main__':
         print(f"Data source: SharePoint list {SOURCE.settings['list_name']}, "
               f"refreshed every {SOURCE.settings['refresh_seconds']} seconds")
     print(f"Site time zone: {SITE_TIMEZONE}")
+    print(f"Readiness history: {READINESS_HISTORY}")
     print("=" * 60)
     print(f"\nOpen http://localhost:{PORT} in your browser\n")
     serve(app, host='0.0.0.0', port=PORT)

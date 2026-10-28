@@ -1,0 +1,410 @@
+{% extends 'base.html' %}
+{% from '_macros.html' import pill, pills %}
+{% block title %}Fleet Overview{% endblock %}
+{% block subtitle %}Fleet Overview{% endblock %}
+
+{% set family_titles = {'Aircraft': 'Aircraft', 'Ground Control Station': 'Ground Control Stations', 'Payload': 'Payloads'} %}
+{% set condition_class = {'FMC': 'ready', 'PMC': 'limited', 'NMC': 'not-ready', 'Destroyed/Lost': 'lost'} %}
+{% set condition_title = {'FMC': 'Ready', 'PMC': 'Limited', 'NMC': 'Not Ready', 'Destroyed/Lost': 'Destroyed/Lost, left out of readiness'} %}
+
+{% macro pct(r) -%}
+{%- if r.pct is none %}&ndash;{% else %}{{ '%.0f' % r.pct }}%{% endif -%}
+{%- endmacro %}
+
+{% macro counts(r) -%}
+<div class="counts">
+    <span class="count ready" title="FMC">{{ r.fmc }} Ready</span>
+    <span class="count limited" title="PMC">{{ r.pmc }} Limited</span>
+    <span class="count not-ready" title="NMC">{{ r.nmc }} Not Ready</span>
+    {% if r.none %}<span class="count none">{{ r.none }} No condition</span>{% endif %}
+    {% if r.other %}<span class="count none" title="A Material Condition the dashboard does not know">{{ r.other }} Other condition</span>{% endif %}
+    {% if r.lost %}<span class="count lost">{{ r.lost }} Destroyed/Lost</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro condition_pill(value) -%}
+{%- if value -%}
+<span class="pill cond {{ condition_class.get(value, 'none') }}" title="{{ condition_title.get(value, 'A Material Condition the dashboard does not know') }}">{{ value }}</span>
+{%- else -%}
+<span class="pill cond none" title="Material Condition is blank">No condition</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% block head %}
+{# Served locally (verified against jsDelivr and unpkg) so charts work without CDN access. #}
+<script src="{{ url_for('static', filename='vendor/chart-4.4.1.umd.js') }}"></script>
+<style>
+    :root {
+        --line-aircraft: #6e9ff0;
+        --line-gcs: #c58af9;
+        --line-payload: #4fc3c8;
+    }
+    [data-theme="light"] {
+        --line-aircraft: #2f6fd6;
+        --line-gcs: #8a3fd1;
+        --line-payload: #0e7c80;
+    }
+    .note {
+        border: 1px solid var(--warn);
+        border-left-width: 6px;
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin: 0 0 16px 0;
+        font-size: 14px;
+    }
+    .filter-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin: 0 0 18px 0;
+        font-size: 14px;
+    }
+    .filter-bar select, .filter-bar button {
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 14px;
+    }
+    .filter-bar button { cursor: pointer; }
+    .filter-bar a { font-size: 13px; color: var(--muted); }
+    .grid-top {
+        display: grid;
+        grid-template-columns: minmax(280px, 1.3fr) repeat(3, minmax(200px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+    .grid-top-2 {
+        display: grid;
+        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+        gap: 20px;
+        margin-bottom: 24px;
+    }
+    @media (max-width: 1300px) {
+        .grid-top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 700px) {
+        .grid-top, .grid-top-2, .grid-bottom { grid-template-columns: minmax(0, 1fr); }
+    }
+    .grid-top .card, .grid-top-2 .card, .grid-bottom .card { margin-bottom: 0; }
+    .big {
+        font-size: 38px;
+        font-weight: 700;
+        line-height: 1.1;
+        margin: 6px 0 2px 0;
+    }
+    .label {
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .counts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 12px;
+        margin-top: 10px;
+        font-size: 13px;
+    }
+    .count::before {
+        content: '';
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: var(--muted);
+    }
+    .count.ready::before { background: var(--good); }
+    .count.limited::before { background: var(--warn); }
+    .count.not-ready::before { background: var(--bad); }
+    .count.lost { color: var(--lost); }
+    .count.lost::before { background: var(--lost); }
+    .count.none::before { background: transparent; border: 1px solid var(--muted); }
+    .doughnut-row {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+    }
+    .doughnut {
+        position: relative;
+        width: 150px;
+        height: 150px;
+        flex-shrink: 0;
+    }
+    .doughnut-center {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+    }
+    .doughnut-center .big { margin: 0; font-size: 32px; }
+    .doughnut-side .counts { flex-direction: column; margin-top: 0; }
+    .side-total { font-size: 13px; color: var(--muted); margin-top: 10px; }
+    .small-card .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 14px;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border);
+    }
+    .small-card .row:last-of-type { border-bottom: 0; }
+    .unmapped-list { margin: 8px 0 0 0; padding-left: 18px; font-size: 13px; }
+    .pill.cond { color: #ffffff; font-weight: 600; }
+    .pill.cond.ready { background: var(--good); }
+    .pill.cond.limited { background: var(--warn); color: #1a1a1a; }
+    .pill.cond.not-ready { background: var(--bad); }
+    .pill.cond.lost { background: var(--lost); }
+    .pill.cond.none { background: transparent; border-color: var(--muted); color: var(--text-2); font-weight: 400; }
+    .note-cell {
+        max-width: 280px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .family-table { margin-bottom: 20px; }
+    .grid-bottom {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+        gap: 20px;
+    }
+    .alert-row {
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+    }
+    .alert-row:last-of-type { border-bottom: 0; }
+    .alert-title { color: var(--warn); font-weight: 600; }
+    .chart-container { position: relative; height: 240px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if mapping_problem %}
+<div class="note" role="alert">The asset family file (asset_families.json) could not be read, so every asset shows as Unmapped. The reason is in the dashboard log.</div>
+{% endif %}
+{% if history_problem %}
+<div class="note" role="alert">Today's readiness could not be saved to the trend history. The rest of this page is current; the reason is in the dashboard log.</div>
+{% endif %}
+
+<form class="filter-bar" method="get" action="/overview">
+    <label for="location">Location</label>
+    <select id="location" name="location" onchange="this.form.submit()">
+        <option value="">All locations</option>
+        {% for loc in locations %}
+        <option value="{{ loc }}" {{ 'selected' if loc == location else '' }}>{{ loc }}</option>
+        {% endfor %}
+        {% if any_without_location %}
+        <option value="{{ no_location }}" {{ 'selected' if location == no_location else '' }}>No location</option>
+        {% endif %}
+    </select>
+    <noscript><button type="submit">Show</button></noscript>
+    {% if location %}
+    <span>Showing {{ ready.overall.total }} asset{{ '' if ready.overall.total == 1 else 's' }} at <strong>{{ 'no location' if location == no_location else location }}</strong>.</span>
+    <a href="/overview">Show all</a>
+    {% endif %}
+</form>
+
+<div class="grid-top">
+    <div class="card">
+        <h2 class="card-title">Overall Fleet Readiness</h2>
+        <div class="doughnut-row">
+            <div class="doughnut">
+                <canvas id="chart-readiness" role="img" aria-label="Ready, Limited and Not Ready assets"></canvas>
+                <div class="doughnut-center">
+                    <div class="big" id="readiness-pct">{{ pct(ready.overall) }}</div>
+                    <div class="label">Ready</div>
+                </div>
+            </div>
+            <div class="doughnut-side">
+                {{ counts(ready.overall) }}
+                <div class="side-total">{{ ready.overall.total }} assets in all</div>
+            </div>
+        </div>
+    </div>
+    {% for f in ['Aircraft', 'Ground Control Station', 'Payload'] %}
+    {% set r = ready.families[f] %}
+    <div class="card">
+        <h2 class="card-title">{{ family_titles[f] }}</h2>
+        <div class="big">{{ r.total }}</div>
+        <div class="label">Readiness {{ pct(r) }}</div>
+        {{ counts(r) }}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="grid-top-2">
+    <div class="card small-card">
+        <h2 class="card-title">Support and Unmapped</h2>
+        {% for f in ['Support', 'Unmapped'] %}
+        {% set r = ready.families[f] %}
+        <div class="row">
+            <span>{{ f }}</span>
+            <span>{{ r.total }} assets, readiness {{ pct(r) }}</span>
+        </div>
+        {% endfor %}
+        {% if unmapped %}
+        <p class="card-sub" style="margin: 10px 0 0 0;">These Asset Types are not in asset_families.json. Add them to the file to place them in a family:</p>
+        <ul class="unmapped-list">
+            {% for t, n in unmapped %}
+            <li>{{ t if t else '(blank Asset Type)' }}: {{ n }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    <div class="card small-card">
+        <h2 class="card-title">Last Updated</h2>
+        <div class="big" style="font-size: 24px;">{{ loaded_at | mdy_time }}</div>
+        <div class="label">{{ 'Fetched from SharePoint' if live else 'Exported from SharePoint' }}</div>
+        <p class="card-sub" style="margin: 10px 0 0 0;">Data from {{ source }}, {{ 'fetched' if live else 'exported' }} {{ loaded_at | mdy_time }}, in the SharePoint site's time zone.</p>
+    </div>
+</div>
+
+{% for f, rows in tables %}
+<div class="card family-table">
+    <h2 class="card-title">{{ family_titles[f] }} <span class="count-badge {{ 'zero' if not rows else '' }}">{{ rows | length }}</span></h2>
+    {% if rows %}
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Serial Number</th>
+                <th>Asset Type</th>
+                <th>Location</th>
+                <th>Condition</th>
+                <th>Status</th>
+                <th>Checked out to</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in rows %}
+            <tr>
+                <td class="serial">{{ a.serial_number }}</td>
+                <td>{{ pill(fields, 'asset_type', a.asset_type) }}</td>
+                <td>{{ pills(fields, 'location', a.location) }}</td>
+                <td>{{ condition_pill(a.condition) }}</td>
+                <td>{{ pills(fields, 'status', a.status) }}</td>
+                <td>{{ a.checked_out_to }}</td>
+                <td><div class="note-cell" title="{{ a.notes }}">{{ a.notes }}</div></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty">No {{ family_titles[f] | lower }} here.</div>
+    {% endif %}
+</div>
+{% endfor %}
+
+<div class="grid-bottom">
+    <div class="card">
+        <h2 class="card-title">Alerts <span class="count-badge {{ 'zero' if not problem_count else '' }}">{{ problem_count }}</span></h2>
+        <p class="card-sub">{{ problem_count }} data problem{{ '' if problem_count == 1 else 's' }} in all. The first {{ alert_rows | length }}, in the order of the Needs Attention page:</p>
+        {% for title, a in alert_rows %}
+        <div class="alert-row">
+            <div class="alert-title">{{ title }}</div>
+            <div>{{ a.asset_type or '(blank Asset Type)' }}, serial {{ a.serial_number or '(blank)' }}</div>
+        </div>
+        {% else %}
+        <div class="empty">Nothing to fix here.</div>
+        {% endfor %}
+        <p class="card-sub" style="margin: 12px 0 0 0;"><a href="/attention">View all</a></p>
+    </div>
+    <div class="card">
+        <h2 class="card-title">Readiness Trend</h2>
+        <div class="chart-container"><canvas id="chart-trend" role="img" aria-label="Readiness percentage over the last 7 days"></canvas></div>
+        <p class="card-sub" style="margin: 10px 0 0 0;">
+            {% if trend.points <= 1 %}The trend fills in one point per day: the first good data load of each day adds that day's numbers. {% endif %}
+            Fleet-wide: the Location filter does not change this chart.
+        </p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var overall = {{ ready.overall | tojson }};
+    var trend = {{ trend | tojson }};
+    var charts = [];
+
+    function css(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function draw() {
+        charts.forEach(function (c) { c.destroy(); });
+        charts = [];
+
+        var parts = [
+            ['Ready', overall.fmc, css('--good')],
+            ['Limited', overall.pmc, css('--warn')],
+            ['Not Ready', overall.nmc, css('--bad')],
+            ['No condition', overall.none + overall.other, css('--border')]
+        ].filter(function (p) { return p[1] > 0; });
+        charts.push(new Chart(document.getElementById('chart-readiness'), {
+            type: 'doughnut',
+            data: {
+                labels: parts.map(function (p) { return p[0]; }),
+                datasets: [{
+                    data: parts.map(function (p) { return p[1]; }),
+                    backgroundColor: parts.map(function (p) { return p[2]; }),
+                    borderColor: css('--surface'), borderWidth: 2
+                }]
+            },
+            options: {
+                cutout: '70%', responsive: true, maintainAspectRatio: false, animation: false,
+                plugins: { legend: { display: false } }
+            }
+        }));
+
+        var colors = { 'Overall': css('--text'), 'Aircraft': css('--line-aircraft'),
+                       'Ground Control Station': css('--line-gcs'), 'Payload': css('--line-payload') };
+        var grid = css('--border'), ink = css('--muted');
+        charts.push(new Chart(document.getElementById('chart-trend'), {
+            type: 'line',
+            data: {
+                labels: trend.labels,
+                datasets: Object.keys(trend.series).map(function (name) {
+                    return {
+                        label: name, data: trend.series[name],
+                        borderColor: colors[name], backgroundColor: colors[name],
+                        borderWidth: name === 'Overall' ? 3 : 2,
+                        pointRadius: 3, spanGaps: false, tension: 0
+                    };
+                })
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top', align: 'start',
+                              labels: { color: css('--text-2'), boxWidth: 12, boxHeight: 12 } },
+                    tooltip: { callbacks: { label: function (ctx) {
+                        return ctx.dataset.label + ': ' + (ctx.raw === null ? 'no data' : Math.round(ctx.raw) + '%');
+                    } } }
+                },
+                scales: {
+                    x: { ticks: { color: ink }, grid: { color: grid } },
+                    y: { min: 0, max: 100, ticks: { color: ink, callback: function (v) { return v + '%'; } },
+                         grid: { color: grid } }
+                }
+            }
+        }));
+    }
+
+    draw();
+    document.addEventListener('themechange', draw);
+})();
+</script>
+{% endblock %}

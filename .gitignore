@@ -9,6 +9,10 @@ __pycache__/
 exports/
 *.xlsx
 
+# The readiness history the dashboard writes (READINESS_HISTORY). It is made
+# from list data, so it stays out of git.
+data/
+
 # Certificates and keys never go in git. The SharePoint certificate lives
 # outside this folder (SP_CERT_PATH); these rules are a second line of defence.
 *.pfx

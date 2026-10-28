@@ -10,7 +10,7 @@ import app as dashboard
 import sharepoint
 from fake_sharepoint import FakeClock, FakeSharePoint, FakeTokens, fake_env, make_item
 
-PAGES = ['/', '/attention', '/checkouts', '/metrics', '/api/summary', '/api/assets',
+PAGES = ['/overview', '/', '/attention', '/checkouts', '/metrics', '/api/summary', '/api/assets',
          '/api/attention', '/api/fields', '/api/export/assets.xlsx']
 PEOPLE = {'7': {'Title': 'Pat Example', 'EMail': 'pat.example@example.com'}}
 
