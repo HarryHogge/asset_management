@@ -1,5 +1,6 @@
 import io
 import logging
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -10,7 +11,7 @@ import app as dashboard
 import sharepoint
 from fake_sharepoint import FakeClock, FakeSharePoint, FakeTokens, fake_env, make_item
 
-PAGES = ['/overview', '/', '/attention', '/checkouts', '/metrics', '/api/summary', '/api/assets',
+PAGES = ['/', '/inventory', '/attention', '/checkouts', '/metrics', '/api/summary', '/api/assets',
          '/api/attention', '/api/fields', '/api/export/assets.xlsx']
 PEOPLE = {'7': {'Title': 'Pat Example', 'EMail': 'pat.example@example.com'}}
 
@@ -51,7 +52,7 @@ def test_every_page_with_the_sharepoint_source(sharepoint_app, path):
 
 def test_pages_show_sharepoint_data_and_item_ids(sharepoint_app):
     client, _, _ = sharepoint_app
-    html = client.get('/').get_data(as_text=True)
+    html = client.get('/inventory').get_data(as_text=True)
     assert 'SharePoint: Asset Tracking V2' in html and ', fetched ' in html
     for item_id in ('17', '23', '42'):
         assert 'data-id="%s"' % item_id in html
@@ -63,7 +64,7 @@ def test_names_on_every_view_with_the_sharepoint_source(sharepoint_app):
     client, _, _ = sharepoint_app
     checkouts = client.get('/checkouts').get_data(as_text=True)
     assert 'Pat Example' in checkouts and 'pat.example@example.com' not in checkouts
-    assert 'Pat Example' in client.get('/').get_data(as_text=True)
+    assert 'Pat Example' in client.get('/inventory').get_data(as_text=True)
     # The Attention rules that test Check Out By/To work the same with names.
     groups = {g['key']: [a['id'] for a in g['assets']]
               for g in client.get('/api/attention').get_json()}
@@ -93,21 +94,21 @@ def test_excel_export_ids_filter_uses_sharepoint_item_ids(sharepoint_app):
 
 def test_stale_copy_shows_a_short_note_and_the_reason_only_in_the_log(sharepoint_app, caplog):
     client, fake, clock = sharepoint_app
-    assert client.get('/').status_code == 200
+    assert client.get('/inventory').status_code == 200
     fake.fail_status = 503
     clock.advance(301)
     with caplog.at_level(logging.INFO):
-        client.get('/')
+        client.get('/inventory')
     since = dashboard.SOURCE.load()['stale']['since']
     expected = ('Data is from %s. SharePoint could not be reached; showing the last copy.'
                 % dashboard._clock(since))
-    for path in ['/', '/attention', '/checkouts', '/metrics']:
+    for path in ['/', '/inventory', '/attention', '/checkouts', '/metrics']:
         resp = client.get(path)
         html = resp.get_data(as_text=True)
         assert resp.status_code == 200
         assert expected in html
         assert 'server problem' not in html and 'HTTP 503' not in html
-    assert 'SN-FAKE-017' in client.get('/').get_data(as_text=True)
+    assert 'SN-FAKE-017' in client.get('/inventory').get_data(as_text=True)
     assert 'server problem' in caplog.text and 'HTTP 503' in caplog.text
 
 
@@ -129,7 +130,7 @@ def test_no_good_fetch_says_sharepoint_could_not_be_reached(pfx, monkeypatch, ca
                                          clock=FakeClock(), background=False)
     monkeypatch.setattr(dashboard, 'SOURCE', source)
     with caplog.at_level(logging.INFO):
-        resp = dashboard.app.test_client().get('/')
+        resp = dashboard.app.test_client().get('/inventory')
     html = resp.get_data(as_text=True)
     assert resp.status_code == 503
     assert 'SharePoint could not be reached' in html
@@ -185,6 +186,69 @@ def test_bad_setting_keeps_the_app_up_with_an_error_on_every_page(pfx, monkeypat
 def test_unknown_asset_source_keeps_the_app_up(monkeypatch):
     source = dashboard.make_source('sharepiont')
     monkeypatch.setattr(dashboard, 'SOURCE', source)
-    resp = dashboard.app.test_client().get('/')
+    resp = dashboard.app.test_client().get('/inventory')
     assert resp.status_code == 503
     assert 'ASSET_SOURCE must be csv or sharepoint' in resp.get_data(as_text=True)
+
+
+# --- Addresses and the left nav ---------------------------------------------
+
+HTML_PAGES = {'/': 'overview', '/inventory': 'inventory', '/attention': 'attention',
+              '/checkouts': 'checkouts', '/metrics': 'metrics'}
+
+
+def test_home_page_is_the_overview_and_inventory_moved():
+    client = dashboard.app.test_client()
+    assert 'Overall Fleet Readiness' in client.get('/').get_data(as_text=True)
+    inventory = client.get('/inventory').get_data(as_text=True)
+    assert 'id="asset-table"' in inventory and 'Overall Fleet Readiness' not in inventory
+
+
+@pytest.mark.parametrize('old, new', [
+    ('/overview', '/'),
+    ('/overview?location=SLO+ENG', '/?location=SLO+ENG'),
+    ('/overview?location=%28none%29', '/?location=%28none%29'),
+])
+def test_old_overview_address_redirects_with_302(old, new):
+    resp = dashboard.app.test_client().get(old)
+    assert resp.status_code == 302
+    assert resp.headers['Location'] == new
+
+
+def links(html):
+    return re.findall(r'href="([^"]*)"', html)
+
+
+@pytest.mark.parametrize('path', sorted(HTML_PAGES))
+def test_no_page_links_to_the_home_page_meaning_inventory(path):
+    html = dashboard.app.test_client().get(path).get_data(as_text=True)
+    assert '/overview' not in links(html)
+    # The only links to "/" are the nav's Fleet Overview and the overview's own
+    # "Show all"; the Metrics Assets card goes to /inventory.
+    for m in re.finditer(r'<a [^>]*href="/"[^>]*>([^<]*)<', html):
+        assert m.group(1).strip() in ('Fleet Overview', 'Show all'), m.group(0)
+    if path == '/metrics':
+        assert '<a class="kpi-card" href="/inventory">' in html
+
+
+@pytest.mark.parametrize('path', sorted(HTML_PAGES))
+def test_every_page_has_the_left_nav_with_its_page_highlighted(path):
+    html = dashboard.app.test_client().get(path).get_data(as_text=True)
+    assert 'class="side-nav"' in html and 'header-bar' not in html
+    assert 'id="theme-toggle"' in html
+    nav = html.split('<nav class="side-links">', 1)[1].split('</nav>', 1)[0]
+    assert re.findall(r'href="([^"]+)"', nav) == [href for _, href, _ in dashboard.PAGES]
+    active = re.findall(r'<a href="([^"]+)" class="active" aria-current="page">', nav)
+    assert active == [href for key, href, _ in dashboard.PAGES if key == HTML_PAGES[path]]
+
+
+def test_excel_export_button_is_on_the_inventory_page():
+    html = dashboard.app.test_client().get('/inventory').get_data(as_text=True)
+    head = html.split('<div class="page-head">', 1)[1].split('</div>\n', 2)
+    assert 'id="export-link" href="/api/export/assets.xlsx">Export to Excel</a>' in ''.join(head[:2])
+
+
+def test_error_page_has_the_left_nav(monkeypatch):
+    monkeypatch.setattr(dashboard, 'SOURCE', dashboard.UnavailableSource('Broken for the test.'))
+    html = dashboard.app.test_client().get('/').get_data(as_text=True)
+    assert 'class="side-nav"' in html and 'class="active"' not in html

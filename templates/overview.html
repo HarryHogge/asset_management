@@ -161,6 +161,8 @@
     .pill.cond { color: #ffffff; font-weight: 600; }
     .pill.cond.ready { background: var(--good); }
     .pill.cond.limited { background: var(--warn); color: #1a1a1a; }
+    /* #1a1a1a on the light theme's darker --warn is only 3.9 to 1; black is 4.8. */
+    [data-theme="light"] .pill.cond.limited { color: #000000; }
     .pill.cond.not-ready { background: var(--bad); }
     .pill.cond.lost { background: var(--lost); }
     .pill.cond.none { background: transparent; border-color: var(--muted); color: var(--text-2); font-weight: 400; }
@@ -177,12 +179,18 @@
         gap: 20px;
     }
     .alert-row {
-        padding: 8px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 4px;
         border-bottom: 1px solid var(--border);
         font-size: 13px;
+        text-decoration: none;
+        color: var(--text);
     }
-    .alert-row:last-of-type { border-bottom: 0; }
-    .alert-title { color: var(--warn); font-weight: 600; }
+    .alert-row:hover { background: var(--row-hover); }
+    .alert-row.zero { color: var(--muted); }
     .chart-container { position: relative; height: 240px; }
 </style>
 {% endblock %}
@@ -191,11 +199,13 @@
 {% if mapping_problem %}
 <div class="note" role="alert">The asset family file (asset_families.json) could not be read, so every asset shows as Unmapped. The reason is in the dashboard log.</div>
 {% endif %}
-{% if history_problem %}
+{% if history_off %}
+<div class="note" role="alert">The readiness history is off, so no daily numbers are saved for the trend until the dashboard is restarted. The reason is in the dashboard log.</div>
+{% elif history_problem %}
 <div class="note" role="alert">Today's readiness could not be saved to the trend history. The rest of this page is current; the reason is in the dashboard log.</div>
 {% endif %}
 
-<form class="filter-bar" method="get" action="/overview">
+<form class="filter-bar" method="get" action="/">
     <label for="location">Location</label>
     <select id="location" name="location" onchange="this.form.submit()">
         <option value="">All locations</option>
@@ -209,7 +219,7 @@
     <noscript><button type="submit">Show</button></noscript>
     {% if location %}
     <span>Showing {{ ready.overall.total }} asset{{ '' if ready.overall.total == 1 else 's' }} at <strong>{{ 'no location' if location == no_location else location }}</strong>.</span>
-    <a href="/overview">Show all</a>
+    <a href="/">Show all</a>
     {% endif %}
 </form>
 
@@ -309,15 +319,16 @@
 <div class="grid-bottom">
     <div class="card">
         <h2 class="card-title">Alerts <span class="count-badge {{ 'zero' if not problem_count else '' }}">{{ problem_count }}</span></h2>
-        <p class="card-sub">{{ problem_count }} data problem{{ '' if problem_count == 1 else 's' }} in all. The first {{ alert_rows | length }}, in the order of the Needs Attention page:</p>
-        {% for title, a in alert_rows %}
-        <div class="alert-row">
-            <div class="alert-title">{{ title }}</div>
-            <div>{{ a.asset_type or '(blank Asset Type)' }}, serial {{ a.serial_number or '(blank)' }}</div>
-        </div>
-        {% else %}
-        <div class="empty">Nothing to fix here.</div>
+        <p class="card-sub">{{ problem_count }} data problem{{ '' if problem_count == 1 else 's' }} in all{{ ' here' if location else '' }}. Assets affected by each rule, most first:</p>
+        {% for r in alert_rows %}
+        <a class="alert-row{{ ' zero' if not r.count else '' }}" href="/attention#{{ r.key }}" data-rule="{{ r.key }}">
+            <span>{{ r.title }}</span>
+            <span class="count-badge {{ 'zero' if not r.count else '' }}">{{ r.count }}</span>
+        </a>
         {% endfor %}
+        {% if location %}
+        <p class="card-sub" style="margin: 10px 0 0 0;">These counts are for the location chosen above. The Needs Attention page shows the whole fleet.</p>
+        {% endif %}
         <p class="card-sub" style="margin: 12px 0 0 0;"><a href="/attention">View all</a></p>
     </div>
     <div class="card">

@@ -3,7 +3,8 @@
 {%- if value -%}
 {%- set style = fields.get(key, {}).get('colors', {}).get(value) -%}
 {%- if style -%}
-<span class="pill" style="background: {{ style.bg }}; color: {{ style.fg }};">{{ value }}</span>
+{%- set light = light_pill(style.bg, style.fg) -%}
+<span class="pill listed" style="background: {{ style.bg }}; color: {{ style.fg }}; --light-bg: {{ light.bg }}; --light-fg: {{ light.fg }}; --light-border: {{ light.border }};">{{ value }}</span>
 {%- else -%}
 <span class="pill plain">{{ value }}</span>
 {%- endif -%}

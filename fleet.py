@@ -179,11 +179,14 @@ def filter_location(assets, location):
     return [a for a in assets if location in a['location']]
 
 
-def alerts(groups, limit=5):
-    """The first `limit` (problem title, asset) pairs, in the /attention
-    page's order, and the total number of problems."""
-    pairs = [(g['title'], a) for g in groups for a in g['assets']]
-    return pairs[:limit], len(pairs)
+def alert_rows(groups):
+    """One row per attention rule, {'key', 'title', 'count'}, largest count
+    first, ties in the /attention page's order (so rules at 0 come last).
+    Also the total number of problems."""
+    rows = [{'key': g['key'], 'title': g['title'], 'count': len(g['assets']), 'order': i}
+            for i, g in enumerate(groups)]
+    rows.sort(key=lambda r: (-r['count'], r['order']))
+    return rows, sum(r['count'] for r in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -223,8 +226,11 @@ class ReadinessHistory:
     """The history file: one JSON line per calendar day. Written at most once
     a day, also across restarts, because the last date comes from the file."""
 
-    def __init__(self, path):
+    def __init__(self, path, off_reason=None):
         self.path = path
+        # Set when the folder could not be made at startup: history is then
+        # off until a restart, with no attempt at each page load.
+        self.off_reason = off_reason
         self._lock = threading.Lock()
         self._last_date = None
         self._bad_lines = 0
@@ -269,7 +275,7 @@ class ReadinessHistory:
         """Append today's line if it is not there yet. Never raises: a problem
         goes to the log (once per cause) and to `problem` for the page.
         `families` is a FamilyMap, read only when a line is written."""
-        if not worth_recording(data, now):
+        if self.off_reason or not worth_recording(data, now):
             return False
         today = now.date()
         with self._lock:
@@ -301,6 +307,8 @@ class ReadinessHistory:
     def entries(self):
         """The good lines, oldest first. A file that cannot be read gives none,
         with the reason in `problem` and the log."""
+        if self.off_reason:
+            return []
         with self._lock:
             try:
                 good, bad = self._read_lines()

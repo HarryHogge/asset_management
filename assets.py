@@ -38,6 +38,94 @@ FONT_COLORS = {
     'DustRoseFont': '#8b3a33', 'PeachFont': '#8f3500', 'CoralFont': '#a4262c',
 }
 
+# Light theme backgrounds a pill can sit on (base.html: --surface, --surface-2,
+# --bg, --row-hover). A pill must stand out from every one of them.
+LIGHT_BACKGROUNDS = ('#ffffff', '#fafafa', '#f5f5f5', '#f2f2f2')
+TEXT_CONTRAST = 4.5   # text on its pill
+EDGE_CONTRAST = 3.0   # the pill's fill or border against the page
+
+
+def _rgb(hex_color):
+    h = hex_color.lstrip('#')
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _hex(rgb):
+    return '#%02x%02x%02x' % tuple(int(round(c)) for c in rgb)
+
+
+def luminance(hex_color):
+    """Relative luminance, as WCAG defines it."""
+    def channel(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (channel(c) for c in _rgb(hex_color))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast(a, b):
+    """WCAG contrast ratio of two colors, from 1 to 21."""
+    la, lb = sorted((luminance(a), luminance(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _darken(hex_color, step=0.02):
+    return _hex(c * (1 - step) for c in _rgb(hex_color))
+
+
+def _darken_until(hex_color, ok):
+    color = hex_color
+    for _ in range(200):
+        if ok(color):
+            return color
+        color = _darken(color)
+    return '#000000'
+
+
+def _stands_out(color):
+    return all(contrast(color, page) >= EDGE_CONTRAST for page in LIGHT_BACKGROUNDS)
+
+
+_light_cache = {}
+
+
+def light_pill(bg, fg):
+    """The light theme version of a pill: {'bg', 'fg', 'border'}.
+
+    - Text must reach TEXT_CONTRAST on the fill. Light text on a dark fill:
+      the fill is darkened. Dark text on a pale fill: the text is darkened, so
+      the pale fill keeps the list's color.
+    - The fill, or else a border, must reach EDGE_CONTRAST against every light
+      page background. A pale fill gets a border in its own text color,
+      darkened if needed.
+    - A pill that already meets both is returned unchanged, with no border.
+    """
+    key = (bg.lower(), fg.lower())
+    if key in _light_cache:
+        return _light_cache[key]
+    bg, fg = key
+    if luminance(fg) > luminance(bg):
+        darker = _darken_until(bg, lambda c: contrast(fg, c) >= TEXT_CONTRAST)
+        if contrast(fg, darker) >= TEXT_CONTRAST:
+            bg = darker
+    else:
+        darker = _darken_until(fg, lambda c: contrast(c, bg) >= TEXT_CONTRAST)
+        if contrast(darker, bg) >= TEXT_CONTRAST:
+            fg = darker
+    if contrast(fg, bg) < TEXT_CONTRAST:
+        # Two dark colors cannot get there by darkening: keep the fill and use
+        # black or white text, whichever is further from it. One of the two
+        # is always at least 4.58 to 1 on any fill.
+        fg = max(('#000000', '#ffffff'), key=lambda c: contrast(c, bg))
+    if _stands_out(bg):
+        border = 'transparent'
+    else:
+        border = _darken_until(fg if luminance(fg) < luminance(bg) else bg, _stands_out)
+    result = {'bg': bg, 'fg': fg, 'border': border}
+    _light_cache[key] = result
+    return result
+
+
 # CSV header -> key used everywhere else.
 COLUMNS = {
     'Part Number': 'part_number',

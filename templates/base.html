@@ -60,54 +60,28 @@
             min-height: 100vh;
         }
 
-        /* Header */
-        .header-bar {
-            background: linear-gradient(to right, #DC0000, #0A0A0A);
-            color: white;
-            padding: 12px 20px;
+        /* Page heading: the page's name, and its buttons on the right */
+        .page-head {
             display: flex;
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
             gap: 10px;
-            position: sticky;
-            top: 0;
-            z-index: 100;
+            margin: 0 0 6px 0;
         }
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        .header-bar .logo {
-            width: 40px;
-            height: 40px;
-            background: #B00000;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            font-size: 16px;
-        }
-        .header-bar h1 {
+        .page-head h1 {
             margin: 0;
-            font-size: 18px;
+            font-size: 22px;
             font-weight: 600;
         }
-        .header-bar .subtitle {
-            font-size: 12px;
-            opacity: 0.8;
-        }
-        .header-right {
+        .page-actions {
             display: flex;
-            align-items: center;
             gap: 8px;
             flex-wrap: wrap;
         }
-        .nav a, .header-right button, .header-right .button {
-            background: transparent;
-            border: 1px solid rgba(255, 255, 255, 0.25);
+        .page-actions .button {
+            background: var(--accent-2);
+            border: 1px solid var(--accent-2);
             color: white;
             padding: 7px 14px;
             border-radius: 4px;
@@ -115,20 +89,9 @@
             font-size: 13px;
             text-decoration: none;
         }
-        .nav a:hover, .header-right button:hover, .header-right .button:hover {
-            background: rgba(255, 255, 255, 0.12);
-        }
-        .nav a.active {
-            background: #B00000;
-            border-color: #B00000;
-        }
-        .nav {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-        }
+        .page-actions .button:hover { background: var(--accent-hover); }
 
-        /* Left nav, for pages that turn it on */
+        /* Left nav, the same on every page */
         .shell {
             display: grid;
             grid-template-columns: 220px minmax(0, 1fr);
@@ -316,6 +279,14 @@
             border-color: var(--muted);
             color: var(--text-2);
         }
+        /* The light theme swaps in readable versions of the list's colors,
+           worked out in assets.light_pill and carried on each pill. The
+           dark theme keeps the list's colors as they are. */
+        [data-theme="light"] .pill.listed {
+            background: var(--light-bg) !important;
+            color: var(--light-fg) !important;
+            border-color: var(--light-border);
+        }
 
         /* Tables */
         .table-wrap {
@@ -376,10 +347,8 @@
     </style>
     {% block head %}{% endblock %}
 </head>
-<body{% if left_nav %} class="with-side-nav"{% endif %}>
-    {# A page turns on the left nav by passing left_nav=True; the others keep
-       the header nav. Both are drawn from the same PAGES list. #}
-    {% if left_nav %}
+<body>
+    {# One layout for every page: the left nav, drawn from PAGES. #}
     <div class="shell">
     <aside class="side-nav">
         <div class="side-brand">
@@ -391,33 +360,17 @@
         </div>
         <nav class="side-links">
             {% for key, href, label in pages %}
-            <a href="{{ href }}" class="{{ 'active' if key == active else '' }}">{{ label }}</a>
+            <a href="{{ href }}"{% if key == active %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
             {% endfor %}
         </nav>
         <button type="button" id="theme-toggle" title="Switch light/dark theme">Theme</button>
     </aside>
-    {% else %}
-    <div class="header-bar">
-        <div class="header-left">
-            <div class="logo">AT</div>
-            <div>
-                <h1>Asset Tracking</h1>
-                <div class="subtitle">Flight Operations · {% block subtitle %}{% endblock %}</div>
-            </div>
-        </div>
-        <div class="header-right">
-            <nav class="nav">
-                {% for key, href, label in pages %}
-                <a href="{{ href }}" class="{{ 'active' if key == active else '' }}">{{ label }}</a>
-                {% endfor %}
-            </nav>
-            {% block actions %}{% endblock %}
-            <button type="button" id="theme-toggle" title="Switch light/dark theme">Theme</button>
-        </div>
-    </div>
-    {% endif %}
 
     <div class="content">
+        <div class="page-head">
+            <h1>{% block subtitle %}{% endblock %}</h1>
+            <div class="page-actions">{% block actions %}{% endblock %}</div>
+        </div>
         {% if source %}
         <p class="source-note">
             Data from <strong>{{ source }}</strong>, {{ 'fetched' if live else 'exported' }} {{ loaded_at | mdy_time }}.
@@ -430,9 +383,7 @@
         {% endif %}
         {% block content %}{% endblock %}
     </div>
-    {% if left_nav %}
     </div>
-    {% endif %}
 
     <script>
         document.getElementById('theme-toggle').addEventListener('click', function () {

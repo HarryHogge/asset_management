@@ -15,11 +15,14 @@ Needs Python 3.10 or later.
 
 | Page | What it shows |
 |---|---|
-| `/overview` Fleet Overview | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the first data problems, and a 7-day readiness trend. Filter by Location with `?location=...` |
-| `/` Inventory | Every asset, with filters, sorting, and Excel export of what's shown |
+| `/` Fleet Overview (home page) | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the number of assets each data-problem rule affects, and a 7-day readiness trend. Filter by Location with `?location=...`. The old address `/overview` redirects here, keeping the filter |
+| `/inventory` Inventory | Every asset, with filters, sorting, and Excel export of what's shown |
 | `/attention` | Data problems: OUT with no holder or date, checked out but not OUT, no status, never/overdue inventory, PMC/NMC with no notes |
 | `/checkouts` | Who has what, and for how long |
 | `/metrics` | Condition by asset type, status, ownership, inventory age |
+
+Every page has the same left nav. Inventory's "Export to Excel" button is at
+the top right of the page, beside its heading.
 
 JSON is available at `/api/assets`, `/api/fields`, `/api/summary` and `/api/attention`.
 
@@ -219,18 +222,36 @@ the reason.
 ### The readiness history
 
 The first good data load of each day, on any page, adds one line to the file
-named by `READINESS_HISTORY` (default `data/readiness_history.jsonl`, which
-git ignores). The Readiness Trend chart reads it, so it fills in one point
-per day. A SharePoint copy is only recorded when it is fresh: not stale, and
-fetched that day. A CSV export is recorded as it is. If the line cannot be
-written, the pages still load, the overview shows a short note and the log
-gives the reason.
+named by `READINESS_HISTORY_PATH` (default `data/readiness_history.jsonl`,
+which git ignores; a relative path resolves against this folder). The
+Readiness Trend chart reads it, so it fills in one point per day. A
+SharePoint copy is only recorded when it is fresh: not stale, and fetched
+that day. A CSV export is recorded as it is.
+
+- **At startup** the dashboard makes the file's folder if it is missing, and
+  the startup banner prints the file's path. If the folder cannot be made,
+  the history is off until the next restart: the log says why once, the
+  banner says it is off, and the overview shows a short note.
+- **If a line cannot be written** although the folder exists, the pages
+  still load, the overview shows a short note, the log gives the reason
+  once, and the next page load tries again.
+- The setting used to be called `READINESS_HISTORY`. That name is ignored
+  now, with a warning in the log at startup if it is still set.
+
+### Pill colors in the light theme
+
+Some of the list's pill colors are pale (mint, light gray, gold, cyan and
+others) and fade into the white page. In the light theme only, each pill is
+adjusted so its text has a contrast of at least 4.5 to 1 and the pill stands
+out from the page at 3 to 1 or more: dark text is darkened as needed, a pale
+pill gets a border in its text color, and a dark pill with white text is
+darkened as needed. The dark theme shows the list's colors exactly.
+`pill_colors.json` keeps the list's own colors.
 
 ## Tests
 
 The tests use made-up Microsoft replies and never touch the network. They
 write the readiness history to a temporary folder, never to `data/`.
-
 Windows (PowerShell):
 
 ```

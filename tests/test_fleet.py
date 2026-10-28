@@ -1,4 +1,4 @@
-"""The Fleet Overview page: families, readiness, the daily history and /overview."""
+"""The Fleet Overview page: families, readiness, the daily history and the overview page."""
 import json
 import logging
 import os
@@ -85,8 +85,8 @@ def test_missing_family_file_makes_everything_unmapped_and_logs_once(tmp_path, m
     monkeypatch.setattr(dashboard, 'FAMILIES', families)
     client = dashboard.app.test_client()
     with caplog.at_level(logging.INFO):
-        html = client.get('/overview').get_data(as_text=True)
-        client.get('/overview')
+        html = client.get('/').get_data(as_text=True)
+        client.get('/')
     assert 'could not be read, so every asset shows as Unmapped' in html
     assert 'Readiness &ndash;' in html  # Aircraft: nothing to divide by.
     logged = [r for r in caplog.records if 'shows as Unmapped' in r.getMessage()]
@@ -101,7 +101,7 @@ def test_badly_shaped_family_file_shows_the_note(tmp_path, monkeypatch, history)
     path = tmp_path / 'asset_families.json'
     path.write_text('{"VXE-30": "Drone"}', encoding='utf-8')
     monkeypatch.setattr(dashboard, 'FAMILIES', fleet.FamilyMap(str(path)))
-    html = dashboard.app.test_client().get('/overview').get_data(as_text=True)
+    html = dashboard.app.test_client().get('/').get_data(as_text=True)
     assert 'could not be read, so every asset shows as Unmapped' in html
     assert 'Unmapped</span>' in html
 
@@ -192,14 +192,55 @@ def test_location_filter():
     assert len(fleet.filter_location(rows, '')) == 3
 
 
-def test_alerts_follow_the_attention_page_order():
-    groups = [{'title': 'First', 'assets': [asset(serial='1'), asset(serial='2')]},
-              {'title': 'Empty', 'assets': []},
-              {'title': 'Second', 'assets': [asset(serial=str(n)) for n in range(3, 9)]}]
-    rows, total = fleet.alerts(groups)
-    assert total == 8
-    assert [(t, a['serial_number']) for t, a in rows] == [
-        ('First', '1'), ('First', '2'), ('Second', '3'), ('Second', '4'), ('Second', '5')]
+def test_alert_rows_one_per_rule_by_count_with_ties_in_rule_order():
+    groups = [{'key': 'a', 'title': 'A', 'assets': [asset(), asset()]},
+              {'key': 'zero1', 'title': 'Zero 1', 'assets': []},
+              {'key': 'b', 'title': 'B', 'assets': [asset() for _ in range(6)]},
+              {'key': 'c', 'title': 'C', 'assets': [asset(), asset()]},
+              {'key': 'zero2', 'title': 'Zero 2', 'assets': []}]
+    rows, total = fleet.alert_rows(groups)
+    assert total == 10
+    assert [(r['key'], r['count']) for r in rows] == [
+        ('b', 6), ('a', 2), ('c', 2), ('zero1', 0), ('zero2', 0)]
+
+
+def alert_card(html):
+    """[(rule key, link, count)] from the overview's Alerts card."""
+    found = re.findall(r'<a class="alert-row( zero)?" href="([^"]+)" data-rule="([^"]+)">'
+                       r'\s*<span>[^<]*</span>\s*<span class="count-badge[^"]*">(\d+)</span>', html)
+    return [(key, href, int(n), bool(zero)) for zero, href, key, n in found]
+
+
+def test_alert_card_matches_the_attention_page(history):
+    client = dashboard.app.test_client()
+    card = alert_card(client.get('/').get_data(as_text=True))
+    groups = client.get('/api/attention').get_json()
+    assert sorted((k, n) for k, _, n, _ in card) == sorted((g['key'], len(g['assets'])) for g in groups)
+    assert len(card) == len(groups) == len(dashboard.asset_data.attention_rules(90))
+    order = [g['key'] for g in groups]
+    assert [k for k, _, _, _ in card] == sorted(
+        order, key=lambda k: (-next(len(g['assets']) for g in groups if g['key'] == k), order.index(k)))
+    for key, href, n, zero in card:
+        assert href == '/attention#%s' % key
+        assert zero == (n == 0)
+    attention = client.get('/attention').get_data(as_text=True)
+    for key, _, _, _ in card:
+        assert 'id="%s"' % key in attention
+
+
+def test_alert_card_uses_the_location_filter(sharepoint_app, history):
+    client, _ = sharepoint_app
+    html = client.get('/?location=Test+Bay+B').get_data(as_text=True)
+    card = alert_card(html)
+    # Only SN-FAKE-002 is at Test Bay B: never inventoried, and NMC with no
+    # notes. A tie at 1, so the rules keep the /attention order.
+    assert [(k, n) for k, _, n, _ in card[:2]] == [('never_inventoried', 1),
+                                                   ('degraded_no_notes', 1)]
+    assert sum(n for _, _, n, _ in card) == 2
+    assert 'The Needs Attention page shows the whole fleet' in html
+    whole = client.get('/').get_data(as_text=True)
+    assert {k: n for k, _, n, _ in alert_card(whole)}['never_inventoried'] == 4
+    assert 'The Needs Attention page shows the whole fleet' not in whole
 
 
 # --- The daily snapshot -------------------------------------------------------
@@ -272,7 +313,7 @@ def test_stale_or_earlier_day_sharepoint_copy_writes_nothing(tmp_path):
 
 def test_a_failed_load_records_nothing(history, monkeypatch):
     monkeypatch.setattr(dashboard, 'SOURCE', dashboard.UnavailableSource('Broken for the test.'))
-    assert dashboard.app.test_client().get('/overview').status_code == 503
+    assert dashboard.app.test_client().get('/').status_code == 503
     assert not os.path.exists(history.path)
 
 
@@ -283,8 +324,8 @@ def test_failed_write_keeps_the_page_up_with_a_note(tmp_path, monkeypatch, caplo
     monkeypatch.setattr(dashboard, 'HISTORY', fleet.ReadinessHistory(str(blocked)))
     client = dashboard.app.test_client()
     with caplog.at_level(logging.INFO):
-        resp = client.get('/overview')
-        client.get('/')
+        resp = client.get('/')
+        client.get('/inventory')
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
     assert "Today's readiness could not be saved to the trend history" in html
@@ -294,8 +335,8 @@ def test_failed_write_keeps_the_page_up_with_a_note(tmp_path, monkeypatch, caplo
 
 def test_overview_records_with_the_csv_source(history):
     client = dashboard.app.test_client()
-    client.get('/overview')
     client.get('/')
+    client.get('/inventory')
     got = lines(history)
     assert len(got) == 1
     assert got[0]['source'] == 'Asset Tracking V2.csv' and got[0]['total'] == 146
@@ -320,7 +361,7 @@ def sharepoint_app(pfx, monkeypatch):
 
 def test_overview_with_the_sharepoint_source(sharepoint_app, history):
     client, _ = sharepoint_app
-    resp = client.get('/overview')
+    resp = client.get('/')
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
     assert 'SN-FAKE-001' in html and ', fetched ' in html
@@ -338,7 +379,7 @@ def test_overview_stale_sharepoint_copy_is_not_recorded(sharepoint_app, history)
     fake.fail_status = 503
     dashboard.SOURCE.clock.advance(301)
     dashboard.SOURCE.load()  # the refresh fails: the copy is now stale
-    resp = client.get('/overview')
+    resp = client.get('/')
     assert resp.status_code == 200
     assert 'SharePoint could not be reached; showing the last copy' in resp.get_data(as_text=True)
     assert not os.path.exists(history.path)
@@ -346,11 +387,11 @@ def test_overview_stale_sharepoint_copy_is_not_recorded(sharepoint_app, history)
 
 def test_overview_location_filter_through_the_page(sharepoint_app, history):
     client, _ = sharepoint_app
-    html = client.get('/overview?location=Test+Bay+B').get_data(as_text=True)
+    html = client.get('/?location=Test+Bay+B').get_data(as_text=True)
     assert 'SN-FAKE-002' in html and 'SN-FAKE-001' not in html
-    html = client.get('/overview?location=Test+Bay+A').get_data(as_text=True)
+    html = client.get('/?location=Test+Bay+A').get_data(as_text=True)
     assert 'SN-FAKE-001' in html and 'SN-FAKE-002' in html and 'SN-FAKE-003' not in html
-    html = client.get('/overview?location=' + fleet.NO_LOCATION).get_data(as_text=True)
+    html = client.get('/?location=' + fleet.NO_LOCATION).get_data(as_text=True)
     assert 'SN-FAKE-003' in html and 'SN-FAKE-001' not in html
     assert '<option value="(none)" selected>No location</option>' in html
     # The history is fleet-wide whatever the filter.
@@ -377,7 +418,7 @@ def test_trend_has_seven_dates_with_gaps():
 
 
 def test_trend_with_one_point_says_how_it_fills_in(history):
-    html = dashboard.app.test_client().get('/overview').get_data(as_text=True)
+    html = dashboard.app.test_client().get('/').get_data(as_text=True)
     assert 'The trend fills in one point per day' in html
     assert 'the Location filter does not change this chart' in html
 
@@ -393,26 +434,71 @@ def test_bad_history_lines_are_skipped(tmp_path, caplog):
     assert len([r for r in caplog.records if 'could not be read' in r.getMessage()]) == 1
 
 
+# --- The history path setting -------------------------------------------------
+
+def test_history_path_default_relative_and_absolute(tmp_path):
+    assert dashboard.history_path({}) == os.path.join(dashboard.BASE_DIR, 'data',
+                                                      'readiness_history.jsonl')
+    assert dashboard.history_path({'READINESS_HISTORY_PATH': ''}) == dashboard.history_path({})
+    assert dashboard.history_path({'READINESS_HISTORY_PATH': os.path.join('x', 'h.jsonl')}) == \
+        os.path.join(dashboard.BASE_DIR, 'x', 'h.jsonl')
+    absolute = str(tmp_path / 'h.jsonl')
+    assert dashboard.history_path({'READINESS_HISTORY_PATH': absolute}) == absolute
+
+
+def test_missing_history_folder_is_created_at_startup(tmp_path):
+    path = tmp_path / 'asset_data' / 'readiness_history.jsonl'
+    h = dashboard.make_history({'READINESS_HISTORY_PATH': str(path)})
+    assert path.parent.is_dir() and not path.exists()
+    assert h.path == str(path) and h.off_reason is None
+
+
+def test_folder_that_cannot_be_created_turns_history_off(tmp_path, monkeypatch, caplog):
+    a_file = tmp_path / 'not-a-folder.txt'
+    a_file.write_text('x', encoding='utf-8')
+    path = a_file / 'sub' / 'readiness_history.jsonl'
+    with caplog.at_level(logging.INFO):
+        h = dashboard.make_history({'READINESS_HISTORY_PATH': str(path)})
+        monkeypatch.setattr(dashboard, 'HISTORY', h)
+        client = dashboard.app.test_client()
+        resp = client.get('/')
+        client.get('/inventory')
+        client.get('/')
+    html = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert 'The readiness history is off' in html
+    assert h.off_reason and str(a_file) in h.off_reason
+    assert not path.exists() and h.entries() == []
+    logged = [r for r in caplog.records if 'Readiness history' in r.getMessage()]
+    assert len(logged) == 1 and 'OFF until the dashboard is restarted' in logged[0].getMessage()
+
+
+def test_old_setting_name_is_ignored_with_a_warning(tmp_path, caplog):
+    path = tmp_path / 'h.jsonl'
+    with caplog.at_level(logging.INFO):
+        h = dashboard.make_history({'READINESS_HISTORY': str(tmp_path / 'old.jsonl'),
+                                    'READINESS_HISTORY_PATH': str(path)})
+    assert h.path == str(path)
+    warned = [r for r in caplog.records if 'READINESS_HISTORY is ignored' in r.getMessage()]
+    assert len(warned) == 1 and warned[0].levelno == logging.WARNING
+    assert 'READINESS_HISTORY_PATH' in warned[0].getMessage()
+
+
 # --- The page -----------------------------------------------------------------
 
-def test_overview_is_first_in_the_nav_and_has_the_left_nav(history):
-    assert dashboard.PAGES[0] == ('overview', '/overview', 'Fleet Overview')
-    assert dashboard.PAGES[1][1] == '/'
-    html = dashboard.app.test_client().get('/overview').get_data(as_text=True)
-    assert 'class="side-nav"' in html and 'class="header-bar"' not in html
-    assert 'id="theme-toggle"' in html
-    other = dashboard.app.test_client().get('/').get_data(as_text=True)
-    assert 'class="header-bar"' in other and 'class="side-nav"' not in other
+def test_overview_is_first_in_the_nav_at_the_home_page(history):
+    assert dashboard.PAGES[0] == ('overview', '/', 'Fleet Overview')
+    assert dashboard.PAGES[1] == ('inventory', '/inventory', 'Inventory')
 
 
 def test_overview_numbers_for_the_committed_export(history):
-    html = dashboard.app.test_client().get('/overview').get_data(as_text=True)
+    html = dashboard.app.test_client().get('/').get_data(as_text=True)
     assert 'id="readiness-pct">83%' in html
     assert 'Ground Control Stations' in html and 'Payloads' in html
 
 
 def test_overview_unavailable_source_gives_503(monkeypatch):
     monkeypatch.setattr(dashboard, 'SOURCE', dashboard.UnavailableSource('Broken for the test.'))
-    resp = dashboard.app.test_client().get('/overview')
+    resp = dashboard.app.test_client().get('/')
     assert resp.status_code == 503
     assert 'Broken for the test.' in resp.get_data(as_text=True)

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify, request, send_file, abort
+from flask import Flask, render_template, jsonify, request, send_file, abort, redirect
 from datetime import datetime
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
@@ -32,10 +32,35 @@ SITE_TIMEZONE = os.getenv('SITE_TIMEZONE', 'America/Los_Angeles')
 INVENTORY_STALE_DAYS = int(os.getenv('INVENTORY_STALE_DAYS', '90'))
 # Not 5060/5061: those are SIP ports and Chrome refuses to open them.
 PORT = int(os.getenv('PORT', '5070'))
-# One line per day of readiness numbers, for the Fleet Overview trend.
-READINESS_HISTORY = os.getenv('READINESS_HISTORY', os.path.join('data', 'readiness_history.jsonl'))
-if not os.path.isabs(READINESS_HISTORY):
-    READINESS_HISTORY = os.path.join(BASE_DIR, READINESS_HISTORY)
+
+
+def history_path(env=None):
+    """READINESS_HISTORY_PATH: the file holding one line per day of readiness
+    numbers, for the Fleet Overview trend. Relative paths resolve against
+    this repo."""
+    env = os.environ if env is None else env
+    path = env.get('READINESS_HISTORY_PATH') or os.path.join('data', 'readiness_history.jsonl')
+    return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
+
+
+def make_history(env=None):
+    """The readiness history, with its folder made now. If the folder cannot
+    be made, history is off until the dashboard restarts: logged once here,
+    and /overview shows a short note."""
+    env = os.environ if env is None else env
+    if 'READINESS_HISTORY' in env:
+        log.warning('The setting READINESS_HISTORY is ignored: it was renamed '
+                    'READINESS_HISTORY_PATH. Rename it in .env.')
+    path = history_path(env)
+    folder = os.path.dirname(path)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError as e:
+        reason = 'the folder %s could not be created (%s: %s)' % (folder, type(e).__name__, e)
+        log.error('Readiness history is OFF until the dashboard is restarted, because %s. '
+                  'Fix READINESS_HISTORY_PATH in .env, then restart.', reason)
+        return fleet.ReadinessHistory(path, off_reason=reason)
+    return fleet.ReadinessHistory(path)
 
 
 class CsvSource:
@@ -79,11 +104,11 @@ def make_source(name, env=None):
 
 SOURCE = make_source(os.getenv('ASSET_SOURCE'))
 FAMILIES = fleet.FamilyMap()
-HISTORY = fleet.ReadinessHistory(READINESS_HISTORY)
+HISTORY = make_history()
 
 PAGES = [
-    ('overview', '/overview', 'Fleet Overview'),
-    ('inventory', '/', 'Inventory'),
+    ('overview', '/', 'Fleet Overview'),
+    ('inventory', '/inventory', 'Inventory'),
     ('attention', '/attention', 'Needs Attention'),
     ('checkouts', '/checkouts', 'Checkouts'),
     ('metrics', '/metrics', 'Metrics'),
@@ -126,6 +151,10 @@ def unavailable(e):
 @app.context_processor
 def page_context():
     return {'pages': PAGES, 'stale_days': INVENTORY_STALE_DAYS}
+
+
+# A global, not context: _macros.html is imported without the page's context.
+app.jinja_env.globals['light_pill'] = asset_data.light_pill
 
 
 @app.template_filter('mdy')
@@ -171,7 +200,7 @@ def render(template, active, data, **kwargs):
     )
 
 
-@app.route('/overview')
+@app.route('/')
 def overview():
     data = load()
     mapping, mapping_problem = FAMILIES.load()
@@ -179,11 +208,10 @@ def overview():
     assets = fleet.filter_location(data['assets'], location)
     locations, any_without = fleet.location_options(data['assets'], data['fields'])
     groups = asset_data.attention(assets, today(), INVENTORY_STALE_DAYS)
-    alert_rows, problem_count = fleet.alerts(groups)
+    alert_rows, problem_count = fleet.alert_rows(groups)
     # The trend is fleet-wide: it comes from the history, not the filter.
     trend = fleet.trend(HISTORY.entries(), today())
     return render('overview.html', 'overview', data,
-                  left_nav=True,
                   location=location,
                   no_location=fleet.NO_LOCATION,
                   locations=locations,
@@ -192,13 +220,22 @@ def overview():
                   tables=[(f, fleet.table_rows(assets, mapping, f)) for f in fleet.MAIN_FAMILIES],
                   unmapped=fleet.unmapped_types(assets, mapping),
                   mapping_problem=mapping_problem,
+                  history_off=bool(HISTORY.off_reason),
                   history_problem=HISTORY.problem,
                   alert_rows=alert_rows,
                   problem_count=problem_count,
                   trend=trend)
 
 
-@app.route('/')
+@app.route('/overview')
+def overview_moved():
+    """The overview's old address. A temporary redirect, so browsers do not
+    remember it if the home page changes again; the query string is kept."""
+    query = request.query_string.decode('utf-8', 'replace')
+    return redirect('/' + ('?' + query if query else ''), code=302)
+
+
+@app.route('/inventory')
 def inventory():
     data = load()
     groups = asset_data.attention(data['assets'], today(), INVENTORY_STALE_DAYS)
@@ -332,7 +369,10 @@ if __name__ == '__main__':
         print(f"Data source: SharePoint list {SOURCE.settings['list_name']}, "
               f"refreshed every {SOURCE.settings['refresh_seconds']} seconds")
     print(f"Site time zone: {SITE_TIMEZONE}")
-    print(f"Readiness history: {READINESS_HISTORY}")
+    if HISTORY.off_reason:
+        print(f"Readiness history: OFF until restart, because {HISTORY.off_reason}")
+    else:
+        print(f"Readiness history: {HISTORY.path}")
     print("=" * 60)
     print(f"\nOpen http://localhost:{PORT} in your browser\n")
     serve(app, host='0.0.0.0', port=PORT)
