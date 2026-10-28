@@ -1,9 +1,11 @@
 # PROD runbook: asset_management
 
 Runs on: PROD (Windows), in PowerShell, as `slovett`.
-App: the asset tracking dashboard, read from a SharePoint CSV export. Port 5070. PM2 name `asset-management`.
+App: the asset tracking dashboard, read from a SharePoint CSV export or live from SharePoint. Port 5070. PM2 name `asset-management`.
 
-Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection.
+Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection. Part D switches the live dashboard to SharePoint. Part E applies the Fleet Overview (prompts 06 and 07), which becomes the front page.
+
+Since prompt 07, `http://localhost:5070/` opens the **Fleet Overview** and Inventory is at `http://localhost:5070/inventory`. Every page has the `Data from ...` line above its content.
 
 Run the commands one block at a time and check each result before going on.
 
@@ -77,9 +79,10 @@ copy "Asset Tracking V2.csv" "exports\Asset Tracking V2.csv"
 
 It prints `Open http://localhost:5070 in your browser`. On PROD, open that address and check:
 
-- the Inventory page shows the assets;
-- the line above the table reads `Data from Asset Tracking V2.csv, exported <date and time>`, where the time is when you saved the file;
-- Attention, Checkouts and Metrics all open.
+- the front page opens (since prompt 07 this is the Fleet Overview; on older code it is Inventory);
+- the Inventory page shows the assets (at `http://localhost:5070/inventory` since prompt 07);
+- the `Data from ...` line above the page's content reads `Data from Asset Tracking V2.csv, exported <date and time>`, where the time is when you saved the file;
+- Needs Attention, Checkouts and Metrics all open.
 
 If Windows asks whether to allow Python on the network, choose **Allow** for Domain networks. Then stop the app with Ctrl+C.
 
@@ -213,7 +216,7 @@ pm2 restart asset-management
 pm2 logs asset-management --lines 20 --nostream
 ```
 
-Open `http://localhost:5070`. It should look exactly as before: same rows, and the line above the table still says `exported`.
+Open `http://localhost:5070/inventory` (on code from before prompt 07, Inventory is at `http://localhost:5070`). It should look exactly as before: same rows, and the `Data from ...` line above the page's content still says `exported`.
 
 ### C5. Run the connection check
 
@@ -264,11 +267,11 @@ pm2 restart asset-management
 
 ### D4. Check it
 
-Open `http://localhost:5070`. The first page takes a few seconds while it fetches the list, then:
+Open `http://localhost:5070`. The first page takes a few seconds while it fetches the list. Since prompt 07 that first page is the Fleet Overview and Inventory is at `http://localhost:5070/inventory`. Then:
 
-- the line above the table reads `Data from SharePoint: Asset Tracking V2, fetched <date and time>`;
+- the `Data from ...` line above the page's content reads `Data from SharePoint: Asset Tracking V2, fetched <date and time>`;
 - there is no yellow note box;
-- Inventory shows 146 rows (or the current count in SharePoint), with pills in the same colors as before;
+- Inventory (`/inventory`) shows 146 rows (or the current count in SharePoint), with pills in the same colors as before;
 - Check Out By/To shows **names**, not email addresses, on Inventory and on Checkouts;
 - Checkouts has no `(unknown person, ID n)` entries;
 - Needs Attention and Metrics show the same groups and totals as before, apart from any edits made in SharePoint since the last CSV export.
@@ -294,3 +297,162 @@ Set `ASSET_SOURCE=csv` in `.env`, then run `pm2 restart asset-management`. The d
 ### D6. When IT adds the SharePoint permission
 
 Nothing to change. Run the check again: step 8 should say `LIVE`. The dashboard picks it up at its next refresh, and logs `Pill colors: read live from SharePoint` once.
+
+## Part E: Fleet Overview (prompts 06 and 07)
+
+What changes for users:
+- the Fleet Overview becomes the front page, `http://localhost:5070/`;
+- Inventory moves to `http://localhost:5070/inventory`;
+- every page gets a left nav.
+
+The dashboard also starts keeping one line of readiness numbers per day, for the trend chart, in a file outside the repo.
+
+This works the same whether `.env` says `ASSET_SOURCE=csv` or `ASSET_SOURCE=sharepoint`. Leave that line as it is.
+
+### E1. Note the current commit
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git rev-parse --short HEAD
+```
+
+It prints a short code such as `bef937e`. **Write it down.** It is the commit E8 goes back to if something is wrong.
+
+### E2. Pull the new code
+
+```powershell
+git pull
+git log --oneline -1
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+`git log` should show `Prompt 08: runbook for prompts 06 and 07` or something newer. There are no new packages, so `pip` should only say `Requirement already satisfied`. Do not restart yet.
+
+### E3. Add the history setting to `.env`
+
+```powershell
+notepad .env
+```
+
+Add this line at the end, **without quotes**, as for every path in `.env`, then save:
+
+```
+READINESS_HISTORY_PATH=C:\Users\slovett\apps\asset_data\readiness_history.jsonl
+```
+
+Nothing needs removing. The older name `READINESS_HISTORY` was never on PROD.
+
+### E4. Make the history folder
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\Users\slovett\apps\asset_data
+Set-Content -Path C:\Users\slovett\apps\asset_data\write_test.txt -Value ok
+Remove-Item C:\Users\slovett\apps\asset_data\write_test.txt
+```
+
+- **The first line** makes the folder, or does nothing if it is already there. It prints the folder either way.
+- **The other two** write a small file and delete it again. That proves `slovett`, the account PM2 runs the dashboard under, can write there. They should print nothing.
+- **If any line prints red text, stop** and paste it into the session.
+
+The dashboard also makes the folder by itself at startup; this step makes sure it is there and writable first.
+
+### E5. Restart
+
+```powershell
+pm2 restart asset-management
+```
+
+### E6. Check it
+
+**1. The banner and warnings in the log.**
+
+```powershell
+pm2 logs asset-management --lines 40 --nostream
+```
+
+Expect the line:
+
+```
+Readiness history: C:\Users\slovett\apps\asset_data\readiness_history.jsonl
+```
+
+- It must not say `Readiness history: OFF until restart, because ...`.
+- There must be no warning containing `READINESS_HISTORY is ignored`.
+- If the banner lines are missing altogether, go on to checks 2 and 3: they show the same thing.
+
+**2. The folder.**
+
+```powershell
+Test-Path C:\Users\slovett\apps\asset_data
+```
+
+Expect `True`.
+
+**3. The first history line.** Open `http://localhost:5070/` once in the browser, then:
+
+```powershell
+Get-Date -Format yyyy-MM-dd
+Get-Content C:\Users\slovett\apps\asset_data\readiness_history.jsonl
+```
+
+Expect exactly one line, starting `{"date": "<today>"`, where `<today>` is the date the first command printed.
+
+When the line is written:
+- **The first page view** writes it: that is the first successful load of the list after the restart.
+- **With the SharePoint source,** that first view can take a few seconds while the list is fetched.
+- **More page views the same day** add no line.
+- **A new line** appears with the first page view of each later day, so the trend fills in one point per day.
+
+If the file is missing or empty after a page view:
+
+```powershell
+pm2 logs asset-management --lines 100 --nostream | Select-String "Readiness history"
+```
+
+Also look for a short note at the top of the overview, either:
+- "The readiness history is off ..." (the folder could not be made at startup); or
+- "Today's readiness could not be saved ..." (the file could not be written).
+
+Paste the `Select-String` output and the note into the session.
+
+**4. Inventory and the Excel export.** Open `http://localhost:5070/inventory`. The table of assets shows, with **Export to Excel** at the top right, beside the "Inventory" heading. Click it: a file named `assets-<today>.xlsx` downloads.
+
+### E7. What you should see
+
+- **The front page.** `http://localhost:5070/` opens the Fleet Overview, with:
+  - the left nav;
+  - the readiness doughnut and cards;
+  - a table for each family;
+  - the Alerts card;
+  - a Readiness Trend with one point, saying it fills in one point per day.
+- **Inventory** is at `http://localhost:5070/inventory`, with Export to Excel at the top right.
+- **Bookmarks** to `http://localhost:5070/` now open the overview. Old `/overview` links still work: they redirect to `/`, keeping any Location filter.
+- **Tell other users.** Anyone who opens the dashboard for Inventory should be told its new address, `http://localhost:5070/inventory` (or the same path on the server name used from their own computer).
+
+### E8. Roll back, if anything is wrong
+
+Use the commit you wrote down in E1:
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git checkout <commit from E1>
+pm2 restart asset-management
+```
+
+The dashboard is then back to how it was before Part E, with Inventory at `http://localhost:5070`.
+
+What is left behind, and can stay:
+- **The `READINESS_HISTORY_PATH` line in `.env`.** The old code ignores it.
+- **`C:\Users\slovett\apps\asset_data` and the history file.** They are harmless. Keep them, so the trend keeps its days when Part E is applied again.
+
+**Getting back onto the branch.** After a rollback the clone sits on that single commit, not on the branch, so a plain `git pull` will not work. Before the next update, run:
+
+```powershell
+git checkout agent/wednesday
+git pull
+```
+
+**What to paste into the session** if you rolled back:
+- the output of `git log --oneline -1` from before and after the rollback;
+- `pm2 logs asset-management --lines 50 --nostream`;
+- what the page showed, including any note or error text.

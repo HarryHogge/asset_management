@@ -187,9 +187,16 @@ This was not done, and `deploy/` is unchanged.
 
 ## Questions for Scott
 
-1. **(Carried over from report 06, question 3.) A blank condition.** Today it stays in the total and lowers readiness. Should it instead:
+1. **Decided: see "Decisions (prompt 08)" below. (Carried over from report 06, question 3.) A blank condition.** Today it stays in the total and lowers readiness. Should it instead:
    - stay in the total, as now (it counts as not ready until someone fills it in);
    - be left out, like Destroyed/Lost; or
    - be left out, with a warning count on the card?
-2. **(Carried over from report 06, question 4.) Block 40 stands.** Report 05's question still stands. Until the list gives stands their own Asset Type, they count as aircraft here.
+2. **Decided: see "Decisions (prompt 08)" below. (Carried over from report 06, question 4.) Block 40 stands.** Report 05's question still stands. Until the list gives stands their own Asset Type, they count as aircraft here.
 3. **The PROD runbook's wording.** `deploy/prod_runbook.md` still says the front page shows the inventory table. Should it be updated, perhaps as part of the next runbook prompt?
+
+## Decisions (prompt 08)
+
+Both are final.
+
+1. **Assets with no Material Condition count as not ready.** They stay in the total and lower readiness. This is what the code already does, so nothing changes.
+2. **All Block 40 rows count as aircraft** until SharePoint has a separate Asset Type for stands.
