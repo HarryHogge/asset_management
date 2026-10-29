@@ -18,7 +18,7 @@ Needs Python 3.10 or later.
 | `/` Fleet Overview (home page) | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the number of assets each data-problem rule affects, and a 7-day readiness trend. A US / Riga switch at the top: `/?site=riga` shows the Riga site (see "Riga"). Filter by Location with `?location=...`. The old address `/overview` redirects here, keeping the site and the filter |
 | `/riga/upload` | Upload a new Riga fleet workbook. Linked from the Riga view, not from the nav |
 | `/inventory` Inventory | Every asset, with filters, sorting, and Excel export of what's shown |
-| `/attention` | Data problems: OUT with no holder or date, checked out but not OUT, no status, never/overdue inventory, PMC/NMC with no notes |
+| `/attention` | Data problems: OUT with no holder or date, checked out but not OUT, no status, no condition (Material Condition blank), never/overdue inventory, PMC/NMC with no notes |
 | `/checkouts` | Who has what, and for how long |
 | `/metrics` | Condition by asset type, status, ownership, inventory age |
 
@@ -267,7 +267,12 @@ one stays in use, if it does not end in `.xlsx`, cannot be opened as a
 workbook, holds no Riga rows, is larger than 10 MB, or no name was given.
 A good upload is saved to `RIGA_WORKBOOK_PATH` (default
 `data/riga/current.xlsx`); the previous file is kept beside it as
-`current-YYYYMMDD-HHMMSS.xlsx`, and `current.upload.json` records who
+`current-YYYYMMDD-HHMMSS.xlsx` (or `...-2.xlsx` and so on if that name is
+taken). The 20 most recent backups are kept: after each successful upload,
+older ones are deleted, newest decided by the date and time in the name.
+Only files named exactly like that are ever deleted. If one cannot be
+deleted, the upload still counts, the page says so in one line, the log
+names the file, and the next upload tries again. `current.upload.json` records who
 uploaded it, when, the original file name and the rows per sheet. The Riga
 view then says "Uploaded by <name> on <date and time>", in Riga's time zone.
 
@@ -293,8 +298,9 @@ tables are skipped. Headers match ignoring case and surrounding spaces, not
 spelling. A sheet in neither list, a Status value not in the map, a header
 not found, a date that cannot be read and a formula error such as `#REF!`
 are each listed in the log and in a note on the Riga view; the rows are
-still shown. Riga rows have no Status, Date Out or Check Out By/To, so the
-Riga tables leave those columns out and the Riga alerts use only: No
+still shown. The Riga view has a table for each family, Engines and
+Support included (the US view has no Support table). Riga rows have no
+Status, Date Out or Check Out By/To, so the Riga tables leave those columns out and the Riga alerts use only: No
 condition, Never inventoried, Inventory overdue (both only on sheets with a
 date column; that date is when the row was last updated and signed, not a
 physical count) and PMC/NMC with no notes.

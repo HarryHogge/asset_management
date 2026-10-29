@@ -495,13 +495,9 @@ def test_riga_view_shows_riga_only(uploaded, history):
     assert 'aria-current="page">Riga</a>' in html
     assert 'Riga Fleet Readiness' in html
     assert 'id="readiness-pct">58%' in html          # 7 of 12, engines left out
-    # Support (tracking antennas, the catapult) has no table, as on the US
-    # view; it is counted in the Support and Unmapped card.
+    # Every Riga row, Support included: since prompt 12 Support has a table.
     for serial in riga_fixture.SERIALS:
-        if serial.startswith(('TST-TRC', 'TST-PPC')):
-            assert serial not in html
-        else:
-            assert serial in html
+        assert serial in html
     assert 'Support</span>\n            <span>4 assets' in html
     assert 'Asset Tracking V2.csv' not in html
     assert '<th>Checked out to</th>' not in html and '<th>Status</th>' not in html
@@ -705,5 +701,132 @@ def test_riga_alert_card_has_counts_without_links(uploaded, history):
         assert 'data-rule="%s"' % key in card
     for key in ('out_no_holder', 'no_status', 'holder_not_out'):
         assert key not in card
+    # Since prompt 12 the US has its own "No condition" rule, linked to
+    # /attention like the other US rules.
     us = dashboard.app.test_client().get('/').get_data(as_text=True)
-    assert 'data-rule="no_condition"' not in us
+    assert 'href="/attention#no_condition" data-rule="no_condition"' in us
+
+
+# --- Prompt 12: the Riga Support table ------------------------------------------
+
+def table_after(html, heading):
+    """The HTML of the table whose heading starts with `heading`."""
+    return html.split(heading + ' <span')[1].split('</table>')[0]
+
+
+def test_riga_support_table_below_engines(uploaded, history):
+    html = dashboard.app.test_client().get('/?site=riga').get_data(as_text=True)
+    assert html.index('Support <span') > html.index('Engines <span')
+    support = table_after(html, 'Support')
+    assert '3 Ready, 0 Limited, 1 Not Ready' in support
+    assert html.split('Support <span class="count-badge ')[1].startswith('">4</span>')
+    headers = [h for h in support.split('<th>')[1:]]
+    assert [h.split('</th>')[0] for h in headers] == ['Serial Number', 'Asset Type', 'Location',
+                                                      'Condition', 'Notes']
+    # Not Ready first, then by Asset Type and serial: Catapult before Tracking Antenna.
+    order = ['TST-TRC-0003', 'TST-PPC-0001', 'TST-TRC-0001', 'TST-TRC-0002']
+    positions = [support.index(s) for s in order]
+    assert positions == sorted(positions)
+    assert 'TST-ENG-' not in support and 'TST-MK' not in support
+
+
+def test_riga_support_table_follows_the_location_filter(uploaded, history):
+    html = dashboard.app.test_client().get('/?site=riga&location=Field').get_data(as_text=True)
+    support = table_after(html, 'Support')
+    assert 'TST-PPC-0001' in support and 'TST-TRC-0001' in support and 'TST-TRC-0002' in support
+    assert 'TST-TRC-0003' not in support
+    assert '3 Ready, 0 Limited, 0 Not Ready' in support
+
+
+def test_us_view_has_no_support_table(uploaded, history):
+    html = dashboard.app.test_client().get('/').get_data(as_text=True)
+    assert 'Support <span' not in html and 'Engines <span' not in html
+
+
+# --- Prompt 12: keeping the 20 most recent backups ------------------------------
+
+def make_backups(folder, n, stem='current'):
+    """n backups named for days in 2025, with modified times in the opposite
+    order, so a sort by modified time would pick the wrong ones."""
+    names = []
+    for i in range(n):
+        name = '%s-202501%02d-120000.xlsx' % (stem, i + 1)
+        path = os.path.join(folder, name)
+        with open(path, 'wb') as f:
+            f.write(b'old')
+        os.utime(path, (2000000000 - i * 1000, 2000000000 - i * 1000))
+        names.append(name)
+    return names
+
+
+def test_backup_order_and_pattern(tmp_path):
+    for name in ('current-20260101-120000.xlsx', 'current-20260101-120000-2.xlsx',
+                 'current-20260101-120000-10.xlsx', 'current-20251231-235959.xlsx',
+                 'current.xlsx', 'current.upload.json', '.upload-abc.part.xlsx',
+                 'current-2026-01-01.xlsx', 'current-20260101-120000.xlsx.bak',
+                 'other-20270101-120000.xlsx', 'notes.txt'):
+        (tmp_path / name).write_bytes(b'x')
+    got = [os.path.basename(p) for p in riga_loader.backups(str(tmp_path / 'current.xlsx'))]
+    assert got == ['current-20260101-120000-10.xlsx', 'current-20260101-120000-2.xlsx',
+                   'current-20260101-120000.xlsx', 'current-20251231-235959.xlsx']
+    # The workbook's own name decides the pattern, not a fixed "current".
+    assert riga_loader.backups(str(tmp_path / 'riga.xlsx')) == []
+    other = [os.path.basename(p) for p in riga_loader.backups(str(tmp_path / 'other.xlsx'))]
+    assert other == ['other-20270101-120000.xlsx']
+
+
+def test_upload_keeps_the_20_newest_backups_and_nothing_else(uploaded, workbook_bytes):
+    folder = os.path.dirname(uploaded.path)
+    names = make_backups(folder, 25)
+    for extra in ('.upload-left.part.xlsx', 'notes.txt', 'current-20250101-120000.xlsx.bak'):
+        with open(os.path.join(folder, extra), 'wb') as f:
+            f.write(b'keep me')
+    resp = upload(dashboard.app.test_client(), workbook_bytes, name='Pruner')
+    assert resp.status_code == 200
+    assert 'could not be removed' not in resp.get_data(as_text=True)
+    left = riga_loader.backups(uploaded.path)
+    assert len(left) == 20
+    kept = {os.path.basename(p) for p in left}
+    # The new backup (made today) and the 19 newest 2025 names.
+    assert set(names[-19:]) <= kept and not set(names[:6]) & kept
+    present = set(os.listdir(folder))
+    assert {'current.xlsx', 'current.upload.json', '.upload-left.part.xlsx', 'notes.txt',
+            'current-20250101-120000.xlsx.bak'} <= present
+    assert json.load(open(riga_loader.upload_info_path(uploaded.path),
+                          encoding='utf-8'))['uploaded_by'] == 'Pruner'
+
+
+def test_a_rejected_upload_deletes_nothing(uploaded):
+    folder = os.path.dirname(uploaded.path)
+    make_backups(folder, 25)
+    before = sorted(os.listdir(folder))
+    resp = upload(dashboard.app.test_client(), b'not a workbook')
+    assert resp.status_code == 400
+    assert sorted(os.listdir(folder)) == before
+
+
+def test_a_failed_delete_still_counts_as_uploaded(uploaded, workbook_bytes, monkeypatch, caplog):
+    folder = os.path.dirname(uploaded.path)
+    make_backups(folder, 22)
+    stuck = 'current-20250101-120000.xlsx'
+    real_remove = os.remove
+
+    def remove(path):
+        if os.path.basename(path) == stuck:
+            raise PermissionError('in use')
+        real_remove(path)
+    monkeypatch.setattr(riga_loader.os, 'remove', remove)
+    with caplog.at_level(logging.ERROR):
+        resp = upload(dashboard.app.test_client(), workbook_bytes, name='Stuck')
+    html = resp.get_data(as_text=True)
+    assert resp.status_code == 200 and 'Uploaded riga_assets.xlsx' in html
+    assert 'An old backup could not be removed; the next upload tries again.' in html
+    logged = [r.getMessage() for r in caplog.records if 'could not be removed' in r.getMessage()]
+    assert len(logged) == 1 and stuck in logged[0] and 'PermissionError' in logged[0]
+    assert os.path.exists(os.path.join(folder, stuck))
+    # 23 backups: 20 kept, 2 deleted, 1 stuck. The next upload tries again.
+    assert len(riga_loader.backups(uploaded.path)) == 21
+    monkeypatch.setattr(riga_loader.os, 'remove', real_remove)
+    assert upload(dashboard.app.test_client(), workbook_bytes).status_code == 200
+    assert len(riga_loader.backups(uploaded.path)) == 20
+    assert not os.path.exists(os.path.join(folder, stuck))

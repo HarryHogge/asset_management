@@ -27,6 +27,8 @@ MAIN_FAMILIES = ['Aircraft', 'Ground Control Station', 'Payload']
 # Engines have their own table on the Riga view, but are left out of the
 # headline readiness and the family cards. The history still counts them.
 ENGINE = 'Engine'
+# Support has a table of its own on the Riga view only.
+SUPPORT = 'Support'
 
 US, RIGA = 'US', 'Riga'
 SITES = [US, RIGA]

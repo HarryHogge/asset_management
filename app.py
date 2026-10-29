@@ -319,6 +319,7 @@ def riga_overview(riga):
     alert_rows, problem_count = fleet.alert_rows(groups)
     trend = fleet.trend(HISTORY.entries(fleet.RIGA), riga_today)
     engines = fleet.table_rows(assets, mapping, fleet.ENGINE)
+    support = fleet.table_rows(assets, mapping, fleet.SUPPORT)
     return render('overview.html', 'overview', data,
                   locations=locations,
                   any_without_location=any_without,
@@ -326,6 +327,8 @@ def riga_overview(riga):
                   tables=[(f, fleet.table_rows(assets, mapping, f)) for f in fleet.MAIN_FAMILIES],
                   engines=engines,
                   engine_ready=fleet.readiness(engines),
+                  support=support,
+                  support_ready=fleet.readiness(support),
                   unmapped=fleet.unmapped_types(assets, mapping),
                   mapping_problem=mapping_problem,
                   alert_rows=alert_rows,
@@ -356,6 +359,7 @@ def riga_upload_page(message=None, error=None):
                            off_reason=RIGA.off_reason, upload=RIGA.upload_info(),
                            limit=riga_loader.size_text(riga_loader.MAX_UPLOAD_BYTES),
                            max_name=riga_loader.MAX_NAME_LENGTH,
+                           keep=riga_loader.KEEP_BACKUPS,
                            message=message, error=error)
 
 

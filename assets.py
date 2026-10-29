@@ -437,6 +437,12 @@ def attention_rules(stale_days):
         ('no_status', 'No status',
          'Status is blank.',
          lambda a, today: not a['status']),
+        # The same rule as Riga's. A filled value outside FMC, PMC, NMC and
+        # Destroyed/Lost is not caught here: the overview shows it as
+        # "Other condition".
+        ('no_condition', 'No condition',
+         'Material Condition is blank.',
+         lambda a, today: not a['condition']),
         ('never_inventoried', 'Never inventoried',
          'Last Inventory is blank.',
          lambda a, today: a['last_inventory'] is None),

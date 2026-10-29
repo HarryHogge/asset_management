@@ -59,6 +59,9 @@
     </ul>
     <a href="/?site=riga">Open the Riga view</a>
 </div>
+{% if message.prune_failed %}
+<div class="note" role="alert" id="prune-failed">An old backup could not be removed; the next upload tries again. The reason is in the dashboard log.</div>
+{% endif %}
 {% endif %}
 {% if off_reason %}
 <div class="note" role="alert">The folder for the Riga workbook could not be created when the dashboard started, so uploads cannot be saved until the dashboard is restarted. The reason is in the dashboard log.</div>
@@ -74,7 +77,7 @@
 
 <div class="card">
     <h2 class="card-title">Upload a new workbook</h2>
-    <p class="card-sub">The Riga fleet workbook, as an Excel .xlsx file of at most {{ limit }}. It is checked before it replaces the current one, and the current one is kept as a dated backup. Anyone who can open this dashboard can upload here.</p>
+    <p class="card-sub">The Riga fleet workbook, as an Excel .xlsx file of at most {{ limit }}. It is checked before it replaces the current one, and the current one is kept as a dated backup ({{ keep }} most recent kept). Anyone who can open this dashboard can upload here.</p>
     <form class="upload-form" method="post" action="/riga/upload" enctype="multipart/form-data">
         <div>
             <label for="workbook">Workbook (.xlsx)</label>

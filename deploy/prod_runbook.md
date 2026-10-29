@@ -3,7 +3,7 @@
 Runs on: PROD (Windows), in PowerShell, as `slovett`.
 App: the asset tracking dashboard, read from a SharePoint CSV export or live from SharePoint. Port 5070. PM2 name `asset-management`.
 
-Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection. Part D switches the live dashboard to SharePoint. Part E applies the Fleet Overview (prompts 06 and 07), which becomes the front page.
+Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection. Part D switches the live dashboard to SharePoint. Part E applies the Fleet Overview (prompts 06 and 07), which becomes the front page. Part F adds the Riga site to the overview (prompts 11 and 12), with an upload page for the Riga workbook.
 
 Since prompt 07, `http://localhost:5070/` opens the **Fleet Overview** and Inventory is at `http://localhost:5070/inventory`. Every page has the `Data from ...` line above its content.
 
@@ -455,4 +455,186 @@ git pull
 **What to paste into the session** if you rolled back:
 - the output of `git log --oneline -1` from before and after the rollback;
 - `pm2 logs asset-management --lines 50 --nostream`;
+- what the page showed, including any note or error text.
+
+## Part F: Riga site on the overview (prompts 11 and 12)
+
+Do Part E first; Part F assumes it is done.
+
+What changes for users:
+- the Fleet Overview gets a **US / Riga** switch at the top. US is the default and looks as before;
+- `http://localhost:5070/?site=riga` shows Riga's fleet, read from an Excel workbook uploaded at `http://localhost:5070/riga/upload`;
+- Needs Attention and the US Alerts card get a new rule, **No condition** (Material Condition is blank).
+
+Inventory, Needs Attention, Checkouts, Metrics and Export to Excel stay US only. This works the same whether `.env` says `ASSET_SOURCE=csv` or `ASSET_SOURCE=sharepoint`. Leave that line as it is.
+
+### F1. Note the current commit and the US figure
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git rev-parse --short HEAD
+```
+
+It prints a short code such as `0d0d513`. **Write it down.** It is the commit F8 goes back to.
+
+Then open `http://localhost:5070/` and **write down the percentage** in the middle of the readiness doughnut. F7 checks that it has not changed. With the committed CSV export it is 83%; with SharePoint it is whatever the list says today.
+
+### F2. Back up the history file
+
+```powershell
+Copy-Item C:\Users\slovett\apps\asset_data\readiness_history.jsonl C:\Users\slovett\apps\asset_data\readiness_history.before-F.jsonl
+Test-Path C:\Users\slovett\apps\asset_data\readiness_history.before-F.jsonl
+```
+
+Expect `True`. F8 needs this copy if you roll back. From Part F on, the history file also holds Riga's daily lines, and code from before Part F would read them as US lines.
+
+### F3. Pull the new code
+
+```powershell
+git pull
+git log --oneline -1
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+`git log` should show `Prompt 12: Riga follow-ups and runbook Part F` or something newer. There are no new packages, so `pip` should only say `Requirement already satisfied`. Do not restart yet.
+
+### F4. Add the Riga setting to `.env`
+
+```powershell
+notepad .env
+```
+
+Add this line at the end, **without quotes**, then save:
+
+```
+RIGA_WORKBOOK_PATH=C:\Users\slovett\apps\asset_data\riga\current.xlsx
+```
+
+It sits outside the repo folder, so uploads survive a re-clone and the real workbook can never be committed.
+
+### F5. Make the Riga folder
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\Users\slovett\apps\asset_data\riga
+Set-Content -Path C:\Users\slovett\apps\asset_data\riga\write_test.txt -Value ok
+Remove-Item C:\Users\slovett\apps\asset_data\riga\write_test.txt
+```
+
+- **The first line** makes the folder, or does nothing if it is already there. It prints the folder either way.
+- **The other two** write a small file and delete it again, to prove `slovett` can write there. They should print nothing.
+- **If any line prints red text, stop** and paste it into the session.
+
+### F6. Restart
+
+```powershell
+pm2 restart asset-management
+```
+
+### F7. Check it
+
+**1. The banner in the log.**
+
+```powershell
+pm2 logs asset-management --lines 40 --nostream
+```
+
+Expect the line:
+
+```
+Riga workbook: C:\Users\slovett\apps\asset_data\riga\current.xlsx
+```
+
+It must not say `Riga workbook: OFF until restart, because ...`. The `Readiness history: ...` line from Part E should still be there too.
+
+**2. The US view.** Open `http://localhost:5070/`.
+- The **US** side of the new switch is highlighted, and the readiness percentage is the one you wrote down in F1 (83% with the committed CSV).
+- The Alerts card has a new row, **No condition**, with 0, in grey near the bottom. It shows a number only if a US asset has a blank Material Condition.
+
+**3. The Riga view, before any upload.** Open `http://localhost:5070/?site=riga`. Expect:
+
+```
+No Riga workbook has been uploaded yet. Upload the Riga workbook to see Riga's fleet here.
+```
+
+That is expected, not an error.
+
+**4. Check the real workbook before uploading it.** Run the check on the exact copy you will upload:
+
+```powershell
+.venv\Scripts\python -m riga_loader --check "C:\path\to\riga workbook.xlsx"
+```
+
+It needs no running dashboard and no SharePoint settings, and its output masks serial numbers, so it is safe to paste.
+
+- **For the sample workbook** it reads:
+  - 52 rows in all;
+  - Aircraft 6, Ground Control Station 1, Payload 1, Support 8, Engine 36;
+  - `Headline readiness, engines left out: 80%`.
+- **Two lines in section 5 are known and fine:**
+  - `ENG: 1 date(s) not read, 0 formula error(s)`;
+  - `GCS: no date column, so the inventory alerts skip it`.
+- **Paste the whole output into a session** if anything else is listed under:
+  - section 3 (`Mapped headers not found`);
+  - section 4 (`Unknown Status values`);
+  - section 5 (`Dates that could not be read, and formula errors`).
+
+  Such a difference is fixed in `riga_mapping.json`, not by changing the file.
+
+**5. The first upload, by hand.**
+1. Open `http://localhost:5070/riga/upload`.
+2. Choose the workbook and type your name.
+3. Click **Submit**.
+
+Expect a green-bordered box: `Uploaded <file name>: 52 Riga rows read.` (for the sample), with the rows per sheet. An amber-bordered box starting `Not uploaded:` says why, and nothing was changed; paste it into the session.
+
+**6. The Riga view after the upload.** Open `http://localhost:5070/?site=riga`. For the sample:
+- `Uploaded by <your name> on <date and time>`, in the Last Updated card;
+- **80%** in the doughnut, with `16 assets in all, engines not included`;
+- an **Engines** table of 36 and a **Support** table of 8, below the Aircraft, Ground Control Stations and Payloads tables. That is 52 in all;
+- a yellow-bordered note listing what the check found, for the sample the one ENG date that could not be read.
+
+If the uploaded file is newer than the sample, the counts follow the check from step 4, not these numbers.
+
+**7. The upload record.**
+
+```powershell
+Test-Path C:\Users\slovett\apps\asset_data\riga\current.upload.json
+```
+
+Expect `True`.
+
+**8. The other pages are US only.** Inventory, Needs Attention, Checkouts, Metrics and Export to Excel show the same US assets as before; no Riga serial numbers. Needs Attention has a new **No condition** section.
+
+**Later uploads.** Each upload keeps the previous workbook beside it as `current-YYYYMMDD-HHMMSS.xlsx`. The 20 most recent are kept and older ones are deleted by the dashboard. Riga's trend gets one point per day: the first time the overview is opened each day, for either site, after a workbook has been uploaded.
+
+### F8. Roll back, if anything is wrong
+
+Use the commit you wrote down in F1:
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git checkout <commit from F1>
+Copy-Item C:\Users\slovett\apps\asset_data\readiness_history.before-F.jsonl C:\Users\slovett\apps\asset_data\readiness_history.jsonl -Force
+pm2 restart asset-management
+```
+
+**Why the history file is put back:** the older code does not know about sites, so it would read Riga's daily lines as US lines and mix them into the US trend. Putting back the F2 copy removes them. The days between F2 and the rollback drop out of the trend; nothing else is lost.
+
+The dashboard is then back to how it was before Part F, with no site switch.
+
+What is left behind, and can stay:
+- **The `RIGA_WORKBOOK_PATH` line in `.env`.** The older code ignores it.
+- **`C:\Users\slovett\apps\asset_data\riga` and its files.** The older code does not read them. Keep them, so the workbook is already in place when Part F is applied again.
+
+**Getting back onto the branch.** After a rollback the clone sits on that single commit, not on the branch, so a plain `git pull` will not work. Before the next update, run:
+
+```powershell
+git checkout agent/wednesday
+git pull
+```
+
+**What to paste into the session** if you rolled back:
+- the output of `git log --oneline -1` from before and after the rollback;
+- `pm2 logs asset-management --lines 50 --nostream`;
+- the output of the check command from F7 step 4, if you got that far;
 - what the page showed, including any note or error text.

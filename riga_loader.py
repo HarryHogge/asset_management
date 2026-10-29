@@ -56,6 +56,8 @@ SHEET_ID_STEP = 10000000
 
 # Uploads larger than this are refused. The sample workbook is far smaller.
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+# How many upload backups are kept beside the workbook.
+KEEP_BACKUPS = 20
 MAX_NAME_LENGTH = 80
 
 
@@ -535,6 +537,43 @@ def backup_path(path, now):
     return candidate
 
 
+def _backup_pattern(path):
+    """Backup names for this workbook, exactly: current-YYYYMMDD-HHMMSS.xlsx
+    or current-YYYYMMDD-HHMMSS-N.xlsx, from RIGA_WORKBOOK_PATH's own name."""
+    stem, ext = os.path.splitext(os.path.basename(path))
+    return re.compile(r'%s-(\d{8})-(\d{6})(?:-(\d+))?%s' % (re.escape(stem), re.escape(ext)))
+
+
+def backups(path):
+    """The backups beside the workbook, newest first. Sorted by the date,
+    time and number in the name: a backup copy keeps the original's modified
+    time, so that cannot be trusted."""
+    pattern = _backup_pattern(path)
+    folder = os.path.dirname(path)
+    found = []
+    for name in os.listdir(folder):
+        m = pattern.fullmatch(name)
+        if m:
+            found.append(((m.group(1), m.group(2), int(m.group(3) or 1)), name))
+    return [os.path.join(folder, name) for _, name in sorted(found, reverse=True)]
+
+
+def prune_backups(path, keep=None):
+    """Delete the backups beyond the `keep` most recent. Only backup names
+    are ever touched. Returns the names that could not be deleted; each is
+    logged, and the next upload tries again."""
+    keep = KEEP_BACKUPS if keep is None else keep
+    failed = []
+    for old in backups(path)[keep:]:
+        try:
+            os.remove(old)
+        except OSError as e:
+            log.error('Riga upload: the old backup %s could not be removed (%s: %s). '
+                      'The next upload tries again.', old, type(e).__name__, e)
+            failed.append(os.path.basename(old))
+    return failed
+
+
 def _write_json(path, data):
     folder = os.path.dirname(path)
     fd, tmp = tempfile.mkstemp(dir=folder, prefix='.upload-', suffix='.json.part')
@@ -632,6 +671,8 @@ def save_upload(source, stream, filename, name, now, limit=None):
                 'rows_per_sheet': {s: v['rows'] for s, v in result['sheets'].items()},
             }
             _write_json(upload_info_path(source.path), info)
+            # Only now, with the new file and its record in place.
+            info['prune_failed'] = prune_backups(source.path)
         finally:
             _remove_quietly(tmp)
     source.forget()

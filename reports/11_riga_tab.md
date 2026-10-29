@@ -325,10 +325,24 @@ Nothing here was applied, and `deploy/` was not changed. A later runbook prompt 
 
 ## Questions for Scott
 
-1. **Tracking antenna family.** It is in **Support** for now; report 10 offered Ground Control Station or Support. Which one?
-2. **Riga on other pages.** Should Riga rows ever appear on Inventory, Needs Attention, Checkouts and Metrics, for example with a site filter? Today they are only on the overview's Riga view.
-3. **Who can upload.** The upload page is open to anyone who can reach the dashboard, and the name is whatever they type. Is that acceptable on the PROD network, or should uploads be limited (for example by sign-in, or only from the server itself)?
-4. **Backups.** How many should be kept? Today every one is kept. A limit, for example the last 20, is easy to add.
-5. **"No condition" for the US.** Should the US also get the "No condition" alert? Today a blank Material Condition lowers US readiness, but no US alert lists it.
-6. **The full workbook (report 10 question 1).** Still open: is the sample the full workbook? The check command on the real file answers most of it.
-7. **New.** **Support on the Riga view.** Tracking antennas and the catapult (4 in the fixture) are counted in the Support card but have no table, the same as US Support kits. Should Riga's Support get a table, as engines do?
+1. **Decided** (see "Decisions (prompt 12)"). **Tracking antenna family.** It is in **Support** for now; report 10 offered Ground Control Station or Support. Which one?
+2. **Decided** (see "Decisions (prompt 12)"). **Riga on other pages.** Should Riga rows ever appear on Inventory, Needs Attention, Checkouts and Metrics, for example with a site filter? Today they are only on the overview's Riga view.
+3. **Decided** (see "Decisions (prompt 12)"). **Who can upload.** The upload page is open to anyone who can reach the dashboard, and the name is whatever they type. Is that acceptable on the PROD network, or should uploads be limited (for example by sign-in, or only from the server itself)?
+4. **Decided** (see "Decisions (prompt 12)"). **Backups.** How many should be kept? Today every one is kept. A limit, for example the last 20, is easy to add.
+5. **Decided** (see "Decisions (prompt 12)"). **"No condition" for the US.** Should the US also get the "No condition" alert? Today a blank Material Condition lowers US readiness, but no US alert lists it.
+6. **Open with Riga** (see "Decisions (prompt 12)"). **The full workbook (report 10 question 1).** Still open: is the sample the full workbook? The check command on the real file answers most of it.
+7. **Decided** (see "Decisions (prompt 12)"). **New.** **Support on the Riga view.** Tracking antennas and the catapult (4 in the fixture) are counted in the Support card but have no table, the same as US Support kits. Should Riga's Support get a table, as engines do?
+
+## Decisions (prompt 12)
+
+Scott's answers to the questions above. They are final.
+
+| Question | Decision |
+|---|---|
+| 1. Tracking antenna family | Stays **Support** |
+| 2. Riga on other pages | Riga rows appear **only on the overview** for now |
+| 3. Who can upload | **No sign-in** is needed for uploads on PROD |
+| 4. Backups | Keep the **20 most recent** (done in prompt 12) |
+| 5. "No condition" for the US | **Yes** (done in prompt 12) |
+| 6. Is the sample the full workbook? | **Still open, with the Riga team** |
+| 7. Support table on the Riga view | **Yes** (done in prompt 12) |
