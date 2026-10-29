@@ -1,0 +1,94 @@
+{
+  "about": "How the Riga workbook is read. See reports/10_riga_columns.md and reports/11_riga_tab.md. Header names match whatever case and surrounding spaces the sheet uses, but not other spelling. A field set to null is not read for that sheet.",
+  "date_formats": ["dd.mm.yyyy", "dd.mm.yy"],
+  "conditions": {
+    "RTF": "FMC",
+    "RTF WITH REMARKS": "PMC",
+    "FCF REQUIRED": "PMC",
+    "GROUNDED": "NMC",
+    "WRITTEN OFF": "Destroyed/Lost"
+  },
+  "ignored_sheets": ["VEHICLES", "ZALENIEKI STOCK", "OVERALL"],
+  "sheets": [
+    {
+      "sheet": "Mk2.x",
+      "asset_type": "Penguin C Mk2.x",
+      "family": "Aircraft",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset owner", "notes": "Actions/Defects", "date": "INFO UPDATE"}
+    },
+    {
+      "sheet": "MK2",
+      "asset_type": "Penguin C Mk2",
+      "family": "Aircraft",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset owner", "notes": "Actions/Defects", "date": "INFO UPDATE"}
+    },
+    {
+      "sheet": "2.5 VTOL",
+      "asset_type": "Penguin C Mk2.5 VTOL",
+      "family": "Aircraft",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset owner", "notes": "Actions/Defects", "date": "INFO UPDATE"}
+    },
+    {
+      "sheet": "MK3",
+      "asset_type": "Penguin C Mk3 VTOL",
+      "family": "Aircraft",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset owner", "notes": "Actions/Defects", "date": "INFO UPDATE"}
+    },
+    {
+      "sheet": "VXE",
+      "asset_type": "VXE (Riga)",
+      "family": "Aircraft",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset owner", "notes": "NOTES", "date": "INFO UPDATE"}
+    },
+    {
+      "sheet": "EPS",
+      "asset_type": "Epsilon Gimbal",
+      "family": "Payload",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "STATUS", "location": "Location",
+                  "owner": "Asset Owner", "notes": "Actions/Defects", "date": "Date"}
+    },
+    {
+      "sheet": "TRC",
+      "asset_type": "Tracking Antenna",
+      "family": "Support",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset Owner", "notes": "Actions/Defects", "date": "DATE"}
+    },
+    {
+      "sheet": "PPC",
+      "asset_type": "Catapult",
+      "family": "Support",
+      "header_row": 2,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset Owner", "notes": "INFO", "date": "Date"}
+    },
+    {
+      "sheet": "GCS",
+      "asset_type": "Ground Control Station (Riga)",
+      "family": "Ground Control Station",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "STATUS", "location": "Location",
+                  "owner": "Asset Owner", "notes": "INFO:", "date": null}
+    },
+    {
+      "sheet": "ENG",
+      "asset_type": "Engine",
+      "family": "Engine",
+      "header_row": 3,
+      "columns": {"serial": "S/N", "condition": "Status", "location": "Location",
+                  "owner": "Asset Owner", "notes": "Actions/Defects", "date": "INFO UPDATE"}
+    }
+  ]
+}

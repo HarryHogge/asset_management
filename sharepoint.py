@@ -633,7 +633,8 @@ class ListReader:
                 if isinstance(value, dict):
                     value = value.get('LookupId')
                 raw[PERSON_HEADER] = self.person_label(str(value)) if value not in (None, '') else ''
-            rows.append(asset_data._clean_row(raw, self.tz, int(item['id'])))
+            rows.append(asset_data.with_site(asset_data._clean_row(raw, self.tz, int(item['id'])),
+                                             asset_data.US_SITE))
         return rows
 
     def date_check(self):

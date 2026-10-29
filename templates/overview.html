@@ -2,6 +2,23 @@
 {% from '_macros.html' import pill, pills %}
 {% block title %}Fleet Overview{% endblock %}
 {% block subtitle %}Fleet Overview{% endblock %}
+{% set riga_view = site == 'riga' %}
+{% set site_url = '/?site=riga' if riga_view else '/' %}
+
+{% block actions %}
+{% if riga_view %}<a class="button" href="/riga/upload">Upload Riga workbook</a>{% endif %}
+{% endblock %}
+
+{% block source_note %}
+{% if riga_view %}
+{% if source %}
+<p class="source-note">
+    Data from <strong>{{ source }}</strong>, uploaded {{ loaded_at | mdy_time }}.
+    Times and dates are in Riga's time zone.
+</p>
+{% endif %}
+{% else %}{{ super() }}{% endif %}
+{% endblock %}
 
 {% set family_titles = {'Aircraft': 'Aircraft', 'Ground Control Station': 'Ground Control Stations', 'Payload': 'Payloads'} %}
 {% set condition_class = {'FMC': 'ready', 'PMC': 'limited', 'NMC': 'not-ready', 'Destroyed/Lost': 'lost'} %}
@@ -178,6 +195,10 @@
         grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
         gap: 20px;
     }
+    /* After .grid-bottom, so it wins at phone width: one column. */
+    @media (max-width: 700px) {
+        .grid-bottom { grid-template-columns: minmax(0, 1fr); }
+    }
     .alert-row {
         display: flex;
         justify-content: space-between;
@@ -192,10 +213,49 @@
     .alert-row:hover { background: var(--row-hover); }
     .alert-row.zero { color: var(--muted); }
     .chart-container { position: relative; height: 240px; }
+    .site-switch {
+        display: inline-flex;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        margin: 0 0 16px 0;
+    }
+    .site-switch a {
+        padding: 7px 18px;
+        font-size: 14px;
+        text-decoration: none;
+        color: var(--text-2);
+        background: var(--surface);
+    }
+    .site-switch a + a { border-left: 1px solid var(--border); }
+    .site-switch a.active {
+        background: var(--accent-2);
+        color: #ffffff;
+        font-weight: 600;
+    }
+    .note.info { border-color: var(--border); }
+    .findings { margin: 6px 0 0 0; padding-left: 18px; }
+    .heading-counts { font-size: 13px; font-weight: 400; color: var(--muted); }
 </style>
 {% endblock %}
 
 {% block content %}
+<nav class="site-switch" aria-label="Site">
+    <a href="/?site=us"{% if not riga_view %} class="active" aria-current="page"{% endif %}>US</a>
+    <a href="/?site=riga"{% if riga_view %} class="active" aria-current="page"{% endif %}>Riga</a>
+</nav>
+
+{% if riga_view and riga.state != 'ok' %}
+{% if riga.state == 'none' %}
+<div class="note info">No Riga workbook has been uploaded yet. <a href="/riga/upload">Upload the Riga workbook</a> to see Riga's fleet here.</div>
+{% elif riga.state == 'off' %}
+<div class="note" role="alert">The folder for the Riga workbook could not be created when the dashboard started, so the Riga view is off until the dashboard is restarted. The reason is in the dashboard log. The US view is not affected.</div>
+{% elif riga.state == 'mapping' %}
+<div class="note" role="alert">The Riga mapping file (riga_mapping.json) could not be read, so the Riga workbook cannot be shown. The reason is in the dashboard log. The US view is not affected.</div>
+{% else %}
+<div class="note" role="alert">The Riga workbook could not be read. The reason is in the dashboard log. <a href="/riga/upload">Upload it again</a>. The US view is not affected.</div>
+{% endif %}
+{% else %}
 {% if mapping_problem %}
 <div class="note" role="alert">The asset family file (asset_families.json) could not be read, so every asset shows as Unmapped. The reason is in the dashboard log.</div>
 {% endif %}
@@ -205,7 +265,18 @@
 <div class="note" role="alert">Today's readiness could not be saved to the trend history. The rest of this page is current; the reason is in the dashboard log.</div>
 {% endif %}
 
+{% if riga_view and (riga.findings or riga.mismatches) %}
+<div class="note" role="alert">
+    The Riga workbook was read, with these problems. Rows affected are still shown.
+    <ul class="findings">
+        {% for line in riga.findings %}<li>{{ line }}</li>{% endfor %}
+        {% for m in riga.mismatches %}<li>{{ mismatch_text(m) }}</li>{% endfor %}
+    </ul>
+</div>
+{% endif %}
+
 <form class="filter-bar" method="get" action="/">
+    {% if riga_view %}<input type="hidden" name="site" value="riga">{% endif %}
     <label for="location">Location</label>
     <select id="location" name="location" onchange="this.form.submit()">
         <option value="">All locations</option>
@@ -218,14 +289,14 @@
     </select>
     <noscript><button type="submit">Show</button></noscript>
     {% if location %}
-    <span>Showing {{ ready.overall.total }} asset{{ '' if ready.overall.total == 1 else 's' }} at <strong>{{ 'no location' if location == no_location else location }}</strong>.</span>
-    <a href="/">Show all</a>
+    <span>Showing {{ ready.overall.total }} asset{{ '' if ready.overall.total == 1 else 's' }}{% if riga_view and engines %} and {{ engines | length }} engine{{ '' if engines | length == 1 else 's' }}{% endif %} at <strong>{{ 'no location' if location == no_location else location }}</strong>.</span>
+    <a href="{{ site_url }}">Show all</a>
     {% endif %}
 </form>
 
 <div class="grid-top">
     <div class="card">
-        <h2 class="card-title">Overall Fleet Readiness</h2>
+        <h2 class="card-title">{{ 'Riga Fleet Readiness' if riga_view else 'Overall Fleet Readiness' }}</h2>
         <div class="doughnut-row">
             <div class="doughnut">
                 <canvas id="chart-readiness" role="img" aria-label="Ready, Limited and Not Ready assets"></canvas>
@@ -236,7 +307,7 @@
             </div>
             <div class="doughnut-side">
                 {{ counts(ready.overall) }}
-                <div class="side-total">{{ ready.overall.total }} assets in all</div>
+                <div class="side-total">{{ ready.overall.total }} assets in all{% if riga_view %}, engines not included{% endif %}</div>
             </div>
         </div>
     </div>
@@ -273,14 +344,19 @@
     <div class="card small-card">
         <h2 class="card-title">Last Updated</h2>
         <div class="big" style="font-size: 24px;">{{ loaded_at | mdy_time }}</div>
+        {% if riga_view %}
+        <div class="label">Uploaded workbook</div>
+        <p class="card-sub" style="margin: 10px 0 0 0;" id="riga-uploaded">{% if riga.upload %}Uploaded by {{ riga.upload.uploaded_by }} on {{ riga.upload.uploaded_at | mdy_time }}{% if riga.upload.original_filename %}, from {{ riga.upload.original_filename }}{% endif %}.{% else %}Who uploaded this workbook was not recorded.{% endif %} In Riga's time zone. <a href="/riga/upload">Upload a new workbook</a></p>
+        {% else %}
         <div class="label">{{ 'Fetched from SharePoint' if live else 'Exported from SharePoint' }}</div>
         <p class="card-sub" style="margin: 10px 0 0 0;">Data from {{ source }}, {{ 'fetched' if live else 'exported' }} {{ loaded_at | mdy_time }}, in the SharePoint site's time zone.</p>
+        {% endif %}
     </div>
 </div>
 
-{% for f, rows in tables %}
+{% macro family_table(title, rows, heading_counts=none) %}
 <div class="card family-table">
-    <h2 class="card-title">{{ family_titles[f] }} <span class="count-badge {{ 'zero' if not rows else '' }}">{{ rows | length }}</span></h2>
+    <h2 class="card-title">{{ title }} <span class="count-badge {{ 'zero' if not rows else '' }}">{{ rows | length }}</span>{% if heading_counts %} <span class="heading-counts">{{ heading_counts.fmc }} Ready, {{ heading_counts.pmc }} Limited, {{ heading_counts.nmc }} Not Ready</span>{% endif %}</h2>
     {% if rows %}
     <div class="table-wrap">
     <table>
@@ -290,8 +366,10 @@
                 <th>Asset Type</th>
                 <th>Location</th>
                 <th>Condition</th>
+                {% if show_checkouts %}
                 <th>Status</th>
                 <th>Checked out to</th>
+                {% endif %}
                 <th>Notes</th>
             </tr>
         </thead>
@@ -302,8 +380,10 @@
                 <td>{{ pill(fields, 'asset_type', a.asset_type) }}</td>
                 <td>{{ pills(fields, 'location', a.location) }}</td>
                 <td>{{ condition_pill(a.condition) }}</td>
+                {% if show_checkouts %}
                 <td>{{ pills(fields, 'status', a.status) }}</td>
                 <td>{{ a.checked_out_to }}</td>
+                {% endif %}
                 <td><div class="note-cell" title="{{ a.notes }}">{{ a.notes }}</div></td>
             </tr>
             {% endfor %}
@@ -311,38 +391,58 @@
     </table>
     </div>
     {% else %}
-    <div class="empty">No {{ family_titles[f] | lower }} here.</div>
+    <div class="empty">No {{ title | lower }} here.</div>
     {% endif %}
 </div>
+{% endmacro %}
+
+{% for f, rows in tables %}
+{{ family_table(family_titles[f], rows) }}
 {% endfor %}
+{% if riga_view %}
+{{ family_table('Engines', engines, engine_ready) }}
+{% endif %}
 
 <div class="grid-bottom">
     <div class="card">
         <h2 class="card-title">Alerts <span class="count-badge {{ 'zero' if not problem_count else '' }}">{{ problem_count }}</span></h2>
         <p class="card-sub">{{ problem_count }} data problem{{ '' if problem_count == 1 else 's' }} in all{{ ' here' if location else '' }}. Assets affected by each rule, most first:</p>
         {% for r in alert_rows %}
+        {% if riga_view %}
+        <div class="alert-row{{ ' zero' if not r.count else '' }}" data-rule="{{ r.key }}">
+            <span>{{ r.title }}</span>
+            <span class="count-badge {{ 'zero' if not r.count else '' }}">{{ r.count }}</span>
+        </div>
+        {% else %}
         <a class="alert-row{{ ' zero' if not r.count else '' }}" href="/attention#{{ r.key }}" data-rule="{{ r.key }}">
             <span>{{ r.title }}</span>
             <span class="count-badge {{ 'zero' if not r.count else '' }}">{{ r.count }}</span>
         </a>
+        {% endif %}
         {% endfor %}
+        {% if riga_view %}
+        <p class="card-sub" style="margin: 10px 0 0 0;">Riga has no checkout data, so only these rules apply. The inventory rules use the date each row was last updated and signed, on sheets that have one. The Needs Attention page covers US assets only, so these counts have no links.</p>
+        {% else %}
         {% if location %}
         <p class="card-sub" style="margin: 10px 0 0 0;">These counts are for the location chosen above. The Needs Attention page shows the whole fleet.</p>
         {% endif %}
         <p class="card-sub" style="margin: 12px 0 0 0;"><a href="/attention">View all</a></p>
+        {% endif %}
     </div>
     <div class="card">
         <h2 class="card-title">Readiness Trend</h2>
         <div class="chart-container"><canvas id="chart-trend" role="img" aria-label="Readiness percentage over the last 7 days"></canvas></div>
         <p class="card-sub" style="margin: 10px 0 0 0;">
             {% if trend.points <= 1 %}The trend fills in one point per day: the first good data load of each day adds that day's numbers. {% endif %}
-            Fleet-wide: the Location filter does not change this chart.
+            {{ 'All of Riga' if riga_view else 'Fleet-wide' }}: the Location filter does not change this chart.
         </p>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
+{% if not riga_view or riga.state == 'ok' %}
 <script>
 (function () {
     var overall = {{ ready.overall | tojson }};
@@ -391,12 +491,15 @@
                         label: name, data: trend.series[name],
                         borderColor: colors[name], backgroundColor: colors[name],
                         borderWidth: name === 'Overall' ? 3 : 2,
-                        pointRadius: 3, spanGaps: false, tension: 0
+                        pointRadius: 3, spanGaps: false, tension: 0,
+                        // Points at 0% and 100% sit on the edge; draw them whole.
+                        clip: false
                     };
                 })
             },
             options: {
                 responsive: true, maintainAspectRatio: false, animation: false,
+                layout: { padding: { top: 6, bottom: 6 } },
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                     legend: { position: 'top', align: 'start',
@@ -418,4 +521,5 @@
     document.addEventListener('themechange', draw);
 })();
 </script>
+{% endif %}
 {% endblock %}

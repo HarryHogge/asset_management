@@ -164,6 +164,10 @@ DATES = {'date_out', 'last_inventory'}
 # Text the export pads with tabs, newlines or trailing spaces.
 SINGLE_LINE = {'part_number', 'serial_number', 'shelf_location', 'checked_out_to'}
 
+# Every row says which site it belongs to. Rows from the SharePoint list or
+# its CSV export are US rows; riga_loader.py makes the Riga ones.
+US_SITE = 'US'
+
 _cache = {'key': None, 'data': None}
 _lock = threading.Lock()
 
@@ -367,6 +371,12 @@ def _clean_row(raw, tz, row_id):
     return row
 
 
+def with_site(row, site):
+    """The row with its `site` field added after the _clean_row fields."""
+    row['site'] = site
+    return row
+
+
 def load(path, tz_name):
     """Return {'fields', 'assets', 'loaded_at', 'source'}, cached on file mtime."""
     mtime = os.path.getmtime(path)
@@ -390,7 +400,8 @@ def load(path, tz_name):
                 f.seek(0)
             # The export has no SharePoint item ID and serial numbers repeat,
             # so the row position is the only stable key within one file.
-            assets = [_clean_row({renamed.get(h, h): v for h, v in r.items()}, tz, i + 1)
+            assets = [with_site(_clean_row({renamed.get(h, h): v for h, v in r.items()}, tz, i + 1),
+                                US_SITE)
                       for i, r in enumerate(csv.DictReader(f))]
         data = {
             'fields': fields,
@@ -528,7 +539,10 @@ def summary(assets, today, stale_days):
 
 
 def serialize(asset):
+    """An asset for the JSON endpoints. They only ever hold US rows, so the
+    `site` field is left out and their answers stay exactly as before."""
     out = dict(asset)
+    out.pop('site', None)
     for key in DATES:
         out[key] = asset[key].isoformat() if asset[key] else None
     return out

@@ -2,9 +2,12 @@
 once-a-day readiness history behind the trend chart.
 
 Families come from asset_families.json, which maps each Asset Type, by its
-exact text, to Aircraft, Ground Control Station, Payload or Support. Any type
-the file does not name, a blank one included, is Unmapped. Nothing is ever
-guessed into Support.
+exact text, to Aircraft, Ground Control Station, Payload, Support or Engine.
+Any type the file does not name, a blank one included, is Unmapped. Nothing
+is ever guessed into Support.
+
+Every history line names its site (US or Riga), and each site gets at most
+one line a day.
 """
 import json
 import logging
@@ -16,11 +19,17 @@ import assets as asset_data
 
 log = logging.getLogger('asset_management.fleet')
 
-FAMILIES = ['Aircraft', 'Ground Control Station', 'Payload', 'Support']
+FAMILIES = ['Aircraft', 'Ground Control Station', 'Payload', 'Support', 'Engine']
 UNMAPPED = 'Unmapped'
 ALL_FAMILIES = FAMILIES + [UNMAPPED]
 # The families with their own card and table on the page.
 MAIN_FAMILIES = ['Aircraft', 'Ground Control Station', 'Payload']
+# Engines have their own table on the Riga view, but are left out of the
+# headline readiness and the family cards. The history still counts them.
+ENGINE = 'Engine'
+
+US, RIGA = 'US', 'Riga'
+SITES = [US, RIGA]
 
 ASSET_FAMILIES_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                    'asset_families.json')
@@ -144,12 +153,14 @@ def readiness(assets):
 
 
 def fleet_readiness(assets, mapping):
-    """{'overall': readiness, 'families': {family: readiness}} for all five families."""
+    """{'overall': readiness, 'families': {family: readiness}} for every
+    family and Unmapped. 'overall' is the headline: engines are left out."""
     by_family = {f: [] for f in ALL_FAMILIES}
     for a in assets:
         by_family[family_of(a['asset_type'], mapping)].append(a)
+    headline = [a for f, rows in by_family.items() if f != ENGINE for a in rows]
     return {
-        'overall': readiness(assets),
+        'overall': readiness(headline),
         'families': {f: readiness(rows) for f, rows in by_family.items()},
     }
 
@@ -201,11 +212,17 @@ def _counts(r):
     }
 
 
-def snapshot(data, mapping, now):
+def site_of(entry):
+    """A history line's site. Lines written before Riga was added have none
+    and are US lines."""
+    return entry.get('site') or US
+
+
+def snapshot(data, mapping, now, site=US):
     """One history line, as a dict."""
     ready = fleet_readiness(data['assets'], mapping)
     line = {'date': now.date().isoformat(), 'recorded_at': now.isoformat(timespec='seconds'),
-            'source': data['source']}
+            'site': site, 'source': data['source']}
     line.update(_counts(ready['overall']))
     line['families'] = {f: _counts(r) for f, r in ready['families'].items()}
     return line
@@ -223,8 +240,9 @@ def worth_recording(data, now):
 
 
 class ReadinessHistory:
-    """The history file: one JSON line per calendar day. Written at most once
-    a day, also across restarts, because the last date comes from the file."""
+    """The history file: one JSON line per site per calendar day. Written at
+    most once a day for each site, also across restarts, because the last
+    date comes from the file."""
 
     def __init__(self, path, off_reason=None):
         self.path = path
@@ -232,7 +250,7 @@ class ReadinessHistory:
         # off until a restart, with no attempt at each page load.
         self.off_reason = off_reason
         self._lock = threading.Lock()
-        self._last_date = None
+        self._last_date = {}
         self._bad_lines = 0
         # Kept apart so a good read never hides a failed write, or the reverse.
         self._problems = {'write': None, 'read': None}
@@ -271,25 +289,28 @@ class ReadinessHistory:
                          'writing' if kind == 'write' else 'reading', self.path)
         self._problems[kind] = problem
 
-    def record(self, data, families, now):
-        """Append today's line if it is not there yet. Never raises: a problem
-        goes to the log (once per cause) and to `problem` for the page.
-        `families` is a FamilyMap, read only when a line is written."""
+    def record(self, data, families, now, site=US, mapping=None):
+        """Append the site's line for today if it is not there yet. Never
+        raises: a problem goes to the log (once per cause) and to `problem`
+        for the page. `families` is a FamilyMap, read only when a line is
+        written; `mapping`, if given, is used instead of it."""
         if self.off_reason or not worth_recording(data, now):
             return False
         today = now.date()
         with self._lock:
-            if self._last_date is not None and self._last_date >= today:
+            known = self._last_date.get(site)
+            if known is not None and known >= today:
                 return False
             try:
                 good, _ = self._read_lines()
-                last = max((d for d, _ in good), default=None)
+                last = max((d for d, e in good if site_of(e) == site), default=None)
                 if last is not None and last >= today:
-                    self._last_date = last
+                    self._last_date[site] = last
                     self._set_problem('write', None)
                     return False
-                mapping, _ = families.load()
-                text = json.dumps(snapshot(data, mapping, now), ensure_ascii=False)
+                if mapping is None:
+                    mapping, _ = families.load()
+                text = json.dumps(snapshot(data, mapping, now, site), ensure_ascii=False)
                 folder = os.path.dirname(self.path)
                 if folder:
                     os.makedirs(folder, exist_ok=True)
@@ -300,13 +321,14 @@ class ReadinessHistory:
                                   'The pages still load; the trend misses this day until it '
                                   'works.' % (self.path, type(e).__name__, e))
                 return False
-            self._last_date = today
+            self._last_date[site] = today
             self._set_problem('write', None)
             return True
 
-    def entries(self):
-        """The good lines, oldest first. A file that cannot be read gives none,
-        with the reason in `problem` and the log."""
+    def entries(self, site=None):
+        """The good lines, oldest first, for one site or (site=None) all. A
+        file that cannot be read gives none, with the reason in `problem` and
+        the log."""
         if self.off_reason:
             return []
         with self._lock:
@@ -321,7 +343,8 @@ class ReadinessHistory:
                 log.warning('Readiness history: %d line(s) in %s could not be read and are '
                             'left out of the trend.', bad, self.path)
             self._bad_lines = bad
-        return [entry for _, entry in sorted(good, key=lambda de: de[0])]
+        return [entry for _, entry in sorted(good, key=lambda de: de[0])
+                if site is None or site_of(entry) == site]
 
 
 def trend(entries, today, days=7):

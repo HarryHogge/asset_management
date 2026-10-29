@@ -119,11 +119,29 @@ def report_05_mapping():
     return rows
 
 
+# The Riga Asset Types added by prompt 11, one per sheet of the workbook.
+RIGA_FAMILIES = {
+    'Penguin C Mk2.x': 'Aircraft',
+    'Penguin C Mk2': 'Aircraft',
+    'Penguin C Mk2.5 VTOL': 'Aircraft',
+    'Penguin C Mk3 VTOL': 'Aircraft',
+    'VXE (Riga)': 'Aircraft',
+    'Epsilon Gimbal': 'Payload',
+    'Ground Control Station (Riga)': 'Ground Control Station',
+    'Tracking Antenna': 'Support',
+    'Catapult': 'Support',
+    'Engine': 'Engine',
+}
+
+
 def test_committed_family_file_matches_report_05():
     committed = fleet.read_families(fleet.ASSET_FAMILIES_PATH)
     expected = report_05_mapping()
     assert len(expected) == 29
-    assert committed == expected
+    # The 29 US entries from report 05 are unchanged and come first; the rest
+    # are exactly the Riga entries.
+    assert list(committed.items())[:29] == list(expected.items())
+    assert dict(list(committed.items())[29:]) == RIGA_FAMILIES
 
 
 # --- Readiness ----------------------------------------------------------------
@@ -153,8 +171,9 @@ def test_unknown_condition_is_counted_not_lost():
 def test_family_readiness_covers_all_five_families():
     mapping = {'VXE-30': 'Aircraft', 'E 95': 'Payload'}
     ready = fleet.fleet_readiness([asset('VXE-30'), asset('E 95', 'NMC'), asset('?')], mapping)
+    # Engine was added by prompt 11, for Riga.
     assert list(ready['families']) == ['Aircraft', 'Ground Control Station', 'Payload',
-                                       'Support', 'Unmapped']
+                                       'Support', 'Engine', 'Unmapped']
     assert ready['families']['Payload']['pct'] == 0.0
     assert ready['families']['Unmapped']['total'] == 1
     assert ready['families']['Support']['pct'] is None

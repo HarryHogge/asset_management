@@ -15,7 +15,8 @@ Needs Python 3.10 or later.
 
 | Page | What it shows |
 |---|---|
-| `/` Fleet Overview (home page) | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the number of assets each data-problem rule affects, and a 7-day readiness trend. Filter by Location with `?location=...`. The old address `/overview` redirects here, keeping the filter |
+| `/` Fleet Overview (home page) | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the number of assets each data-problem rule affects, and a 7-day readiness trend. A US / Riga switch at the top: `/?site=riga` shows the Riga site (see "Riga"). Filter by Location with `?location=...`. The old address `/overview` redirects here, keeping the site and the filter |
+| `/riga/upload` | Upload a new Riga fleet workbook. Linked from the Riga view, not from the nav |
 | `/inventory` Inventory | Every asset, with filters, sorting, and Excel export of what's shown |
 | `/attention` | Data problems: OUT with no holder or date, checked out but not OUT, no status, never/overdue inventory, PMC/NMC with no notes |
 | `/checkouts` | Who has what, and for how long |
@@ -25,6 +26,10 @@ Every page has the same left nav. Inventory's "Export to Excel" button is at
 the top right of the page, beside its heading.
 
 JSON is available at `/api/assets`, `/api/fields`, `/api/summary` and `/api/attention`.
+
+Inventory, Needs Attention, Checkouts, Metrics, the JSON and the Excel
+export show US assets only. Riga assets appear only on the overview's Riga
+view.
 
 ## Running it
 
@@ -211,7 +216,10 @@ percentage. With nothing to divide by, the page shows a dash.
 ### Asset families
 
 `asset_families.json` in this folder places each Asset Type in Aircraft,
-Ground Control Station, Payload or Support. The match is on the exact text.
+Ground Control Station, Payload, Support or Engine. The match is on the
+exact text. Engines are Riga's; they have their own table on the Riga view
+and are left out of the headline readiness and the family cards, but the
+history still counts them.
 A type the file does not name, or a blank one, shows as **Unmapped**, and the
 Support and Unmapped card lists those types. To place a new type, add a line
 to the file, for example `"New Kit": "Support",`, and commit it. The file is
@@ -221,7 +229,7 @@ the reason.
 
 ### The readiness history
 
-The first good data load of each day, on any page, adds one line to the file
+The first good data load of each day, on any page, adds one US line to the file
 named by `READINESS_HISTORY_PATH` (default `data/readiness_history.jsonl`,
 which git ignores; a relative path resolves against this folder). The
 Readiness Trend chart reads it, so it fills in one point per day. A
@@ -237,6 +245,81 @@ that day. A CSV export is recorded as it is.
   once, and the next page load tries again.
 - The setting used to be called `READINESS_HISTORY`. That name is ignored
   now, with a warning in the log at startup if it is still set.
+- Each line says its site, `"site": "US"` or `"site": "Riga"`, and each
+  site gets at most one line a day. Lines from before Riga was added have no
+  site and are read as US. Riga's line is written by the first good load of
+  the Riga workbook each day (Riga's calendar day), whenever the overview is
+  opened for either site. With no workbook uploaded there is no Riga line.
+  The trend shows the chosen site's lines.
+
+## Riga
+
+The Riga site keeps its fleet in an Excel workbook with one sheet per kind of
+equipment, not in SharePoint (report 10 describes it). The dashboard reads it
+with `riga_loader.py`, and the Riga view of the overview shows it.
+
+### Uploading the workbook
+
+Open the Riga view (`/?site=riga`) and use **Upload Riga workbook**, or go to
+`/riga/upload`. Choose the `.xlsx` file, type your name, and submit. The file
+is checked before it replaces the current one. It is refused, and the current
+one stays in use, if it does not end in `.xlsx`, cannot be opened as a
+workbook, holds no Riga rows, is larger than 10 MB, or no name was given.
+A good upload is saved to `RIGA_WORKBOOK_PATH` (default
+`data/riga/current.xlsx`); the previous file is kept beside it as
+`current-YYYYMMDD-HHMMSS.xlsx`, and `current.upload.json` records who
+uploaded it, when, the original file name and the rows per sheet. The Riga
+view then says "Uploaded by <name> on <date and time>", in Riga's time zone.
+
+Anyone who can open the dashboard can upload, and the name is whatever they
+type: the dashboard has no sign-in.
+
+### How the workbook is read
+
+`riga_mapping.json` holds every Riga rule, so a difference in the real file
+is fixed there, with no code change:
+
+- the 10 equipment sheets, each with its Asset Type, its family (a check on
+  `asset_families.json`, which decides), its header row, and the header text
+  of the six columns read (serial, Status, Location, owner, notes, date);
+- the sheets to ignore (VEHICLES, ZALENIEKI STOCK, OVERALL);
+- what each Riga Status means: RTF is FMC, RTF WITH REMARKS and FCF REQUIRED
+  are PMC, GROUNDED is NMC, WRITTEN OFF is Destroyed/Lost;
+- the text date formats, day first: `dd.mm.yyyy` and `dd.mm.yy`.
+
+Only the mapped columns are read, from the row below the header row, and
+only where the serial number is filled in, so titles, legends and side
+tables are skipped. Headers match ignoring case and surrounding spaces, not
+spelling. A sheet in neither list, a Status value not in the map, a header
+not found, a date that cannot be read and a formula error such as `#REF!`
+are each listed in the log and in a note on the Riga view; the rows are
+still shown. Riga rows have no Status, Date Out or Check Out By/To, so the
+Riga tables leave those columns out and the Riga alerts use only: No
+condition, Never inventoried, Inventory overdue (both only on sheets with a
+date column; that date is when the row was last updated and signed, not a
+physical count) and PMC/NMC with no notes.
+
+### Checking a workbook
+
+Run this on any workbook before trusting the numbers. It needs no running
+dashboard and no SharePoint settings, and its output masks serial numbers
+and shows notes only as their length, so it is safe to paste into a chat.
+
+Windows (PowerShell):
+
+```
+.venv\Scripts\python -m riga_loader --check "C:\path\to\riga workbook.xlsx"
+```
+
+macOS / Linux:
+
+```
+.venv/bin/python -m riga_loader --check "path/to/riga workbook.xlsx"
+```
+
+It lists the sheets found, mapped, ignored and unknown; the rows per sheet;
+mapped headers not found; unknown Status values; unreadable dates and
+formula errors; the first 3 rows of each sheet; and the totals per family.
 
 ### Pill colors in the light theme
 
@@ -250,8 +333,9 @@ darkened as needed. The dark theme shows the list's colors exactly.
 
 ## Tests
 
-The tests use made-up Microsoft replies and never touch the network. They
-write the readiness history to a temporary folder, never to `data/`.
+The tests use made-up Microsoft replies and a made-up Riga workbook built in
+`tests/riga_fixture.py`, and never touch the network. They write the
+readiness history and Riga uploads to a temporary folder, never to `data/`.
 Windows (PowerShell):
 
 ```

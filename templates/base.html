@@ -371,12 +371,14 @@
             <h1>{% block subtitle %}{% endblock %}</h1>
             <div class="page-actions">{% block actions %}{% endblock %}</div>
         </div>
+        {% block source_note %}
         {% if source %}
         <p class="source-note">
             Data from <strong>{{ source }}</strong>, {{ 'fetched' if live else 'exported' }} {{ loaded_at | mdy_time }}.
             Times and dates are in the SharePoint site's time zone.
         </p>
         {% endif %}
+        {% endblock %}
         {% if stale %}
         {# Short on purpose: the technical reason is in the log, not on the page. #}
         <div class="stale-banner" role="alert">Data is from {{ stale.since | short_time }}. SharePoint could not be reached; showing the last copy.</div>

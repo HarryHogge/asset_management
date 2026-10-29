@@ -8,6 +8,7 @@ import os
 
 import assets as asset_data
 import fleet
+import riga_loader
 import sharepoint
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +64,30 @@ def make_history(env=None):
     return fleet.ReadinessHistory(path)
 
 
+def riga_workbook_path(env=None):
+    """RIGA_WORKBOOK_PATH: where the uploaded Riga workbook is kept. Relative
+    paths resolve against this repo."""
+    env = os.environ if env is None else env
+    path = env.get('RIGA_WORKBOOK_PATH') or os.path.join('data', 'riga', 'current.xlsx')
+    return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
+
+
+def make_riga(env=None):
+    """The Riga workbook source, with its folder made now, as for the history.
+    If the folder cannot be made, the Riga view and the upload page say so
+    until a restart, and the US view is not affected."""
+    path = riga_workbook_path(env)
+    folder = os.path.dirname(path)
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError as e:
+        reason = 'the folder %s could not be created (%s: %s)' % (folder, type(e).__name__, e)
+        log.error('The Riga workbook is OFF until the dashboard is restarted, because %s. '
+                  'Fix RIGA_WORKBOOK_PATH in .env, then restart.', reason)
+        return riga_loader.RigaSource(path, off_reason=reason)
+    return riga_loader.RigaSource(path)
+
+
 class CsvSource:
     """The SharePoint list's CSV export (the default source)."""
 
@@ -105,6 +130,12 @@ def make_source(name, env=None):
 SOURCE = make_source(os.getenv('ASSET_SOURCE'))
 FAMILIES = fleet.FamilyMap()
 HISTORY = make_history()
+RIGA = make_riga()
+
+# Requests larger than this are cut off before they reach a page. The Riga
+# upload checks its own, smaller limit and says so on the page; this is the
+# outer guard, with room for the rest of the form.
+app.config['MAX_CONTENT_LENGTH'] = riga_loader.MAX_UPLOAD_BYTES + 1024 * 1024
 
 PAGES = [
     ('overview', '/', 'Fleet Overview'),
@@ -117,6 +148,37 @@ PAGES = [
 
 def today():
     return datetime.now(ZoneInfo(SITE_TIMEZONE)).date()
+
+
+def riga_now():
+    return datetime.now(ZoneInfo(riga_loader.RIGA_TIMEZONE))
+
+
+# The family cross-check problems last logged, so each is logged once.
+_riga_logged = {'mismatches': ()}
+
+
+def load_riga():
+    """The Riga workbook as RigaSource.load gives it, never raising. The
+    first good load of each Riga day adds Riga's line to the history."""
+    try:
+        state = RIGA.load()
+    except Exception as e:  # a bug here must never break the US view
+        log.exception('Riga workbook: unexpected error while loading.')
+        return {'state': 'unreadable', 'problem': '%s: %s' % (type(e).__name__, e)}
+    if state['state'] == 'ok':
+        mapping, problem = FAMILIES.load()
+        use, mismatches = riga_loader.cross_check(mapping, state['mapping'])
+        state['families'] = use
+        # With the family file itself broken, its own note covers it.
+        state['mismatches'] = [] if problem else mismatches
+        key = tuple(state['mismatches'])
+        if key != _riga_logged['mismatches']:
+            _riga_logged['mismatches'] = key
+            for m in key:
+                log.warning('Riga workbook: %s', riga_loader.mismatch_text(m))
+        HISTORY.record(state['data'], None, riga_now(), site=fleet.RIGA, mapping=use)
+    return state
 
 
 def load():
@@ -155,6 +217,7 @@ def page_context():
 
 # A global, not context: _macros.html is imported without the page's context.
 app.jinja_env.globals['light_pill'] = asset_data.light_pill
+app.jinja_env.globals['mismatch_text'] = riga_loader.mismatch_text
 
 
 @app.template_filter('mdy')
@@ -202,6 +265,11 @@ def render(template, active, data, **kwargs):
 
 @app.route('/')
 def overview():
+    # The Riga workbook is loaded for either site's view, so Riga's trend
+    # fills in even on days nobody opens the Riga view.
+    riga = load_riga()
+    if request.args.get('site', '').strip().lower() == 'riga':
+        return riga_overview(riga)
     data = load()
     mapping, mapping_problem = FAMILIES.load()
     location = request.args.get('location', '')
@@ -209,9 +277,11 @@ def overview():
     locations, any_without = fleet.location_options(data['assets'], data['fields'])
     groups = asset_data.attention(assets, today(), INVENTORY_STALE_DAYS)
     alert_rows, problem_count = fleet.alert_rows(groups)
-    # The trend is fleet-wide: it comes from the history, not the filter.
-    trend = fleet.trend(HISTORY.entries(), today())
+    # The trend is site-wide: it comes from the history, not the filter.
+    trend = fleet.trend(HISTORY.entries(fleet.US), today())
     return render('overview.html', 'overview', data,
+                  site='us',
+                  show_checkouts=True,
                   location=location,
                   no_location=fleet.NO_LOCATION,
                   locations=locations,
@@ -225,6 +295,76 @@ def overview():
                   alert_rows=alert_rows,
                   problem_count=problem_count,
                   trend=trend)
+
+
+def riga_overview(riga):
+    """The overview for Riga: the same panels, from the uploaded workbook.
+    Riga has no checkout data, so Status and Checked out to are left out,
+    and engines get a table of their own."""
+    location = request.args.get('location', '')
+    common = dict(site='riga', show_checkouts=False, location=location,
+                  no_location=fleet.NO_LOCATION, riga=riga,
+                  history_off=bool(HISTORY.off_reason), history_problem=HISTORY.problem)
+    if riga['state'] != 'ok':
+        return render_template('overview.html', active='overview', fields={}, source=None,
+                               **common)
+    data = riga['data']
+    mapping = riga['families']
+    _, mapping_problem = FAMILIES.load()
+    riga_today = riga_now().date()
+    assets = fleet.filter_location(data['assets'], location)
+    locations, any_without = fleet.location_options(data['assets'], data['fields'])
+    groups = riga_loader.attention(assets, riga_today, INVENTORY_STALE_DAYS,
+                                   riga['result']['dated_types'])
+    alert_rows, problem_count = fleet.alert_rows(groups)
+    trend = fleet.trend(HISTORY.entries(fleet.RIGA), riga_today)
+    engines = fleet.table_rows(assets, mapping, fleet.ENGINE)
+    return render('overview.html', 'overview', data,
+                  locations=locations,
+                  any_without_location=any_without,
+                  ready=fleet.fleet_readiness(assets, mapping),
+                  tables=[(f, fleet.table_rows(assets, mapping, f)) for f in fleet.MAIN_FAMILIES],
+                  engines=engines,
+                  engine_ready=fleet.readiness(engines),
+                  unmapped=fleet.unmapped_types(assets, mapping),
+                  mapping_problem=mapping_problem,
+                  alert_rows=alert_rows,
+                  problem_count=problem_count,
+                  trend=trend,
+                  **common)
+
+
+@app.route('/riga/upload', methods=['GET', 'POST'])
+def riga_upload():
+    """Upload a new Riga workbook. Anyone who can open the dashboard can use
+    this page; the name is whatever they type."""
+    message, error, status = None, None, 200
+    if request.method == 'POST':
+        f = request.files.get('workbook')
+        try:
+            info = riga_loader.save_upload(
+                RIGA, f.stream if f else None, f.filename if f else '',
+                request.form.get('name', ''), riga_now())
+            message = info
+        except riga_loader.UploadRejected as e:
+            error, status = str(e), 400
+    return riga_upload_page(message=message, error=error), status
+
+
+def riga_upload_page(message=None, error=None):
+    return render_template('riga_upload.html', active='overview', source=None,
+                           off_reason=RIGA.off_reason, upload=RIGA.upload_info(),
+                           limit=riga_loader.size_text(riga_loader.MAX_UPLOAD_BYTES),
+                           max_name=riga_loader.MAX_NAME_LENGTH,
+                           message=message, error=error)
+
+
+@app.errorhandler(413)
+def too_large(e):
+    if request.path == '/riga/upload':
+        return riga_upload_page(error='The file is larger than the %s limit.'
+                                % riga_loader.size_text(riga_loader.MAX_UPLOAD_BYTES)), 413
+    return render_template('error.html', active=None, message='The request was too large.'), 413
 
 
 @app.route('/overview')
@@ -373,6 +513,10 @@ if __name__ == '__main__':
         print(f"Readiness history: OFF until restart, because {HISTORY.off_reason}")
     else:
         print(f"Readiness history: {HISTORY.path}")
+    if RIGA.off_reason:
+        print(f"Riga workbook: OFF until restart, because {RIGA.off_reason}")
+    else:
+        print(f"Riga workbook: {RIGA.path}")
     print("=" * 60)
     print(f"\nOpen http://localhost:{PORT} in your browser\n")
     serve(app, host='0.0.0.0', port=PORT)

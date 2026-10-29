@@ -1,0 +1,91 @@
+{% extends 'base.html' %}
+{% block title %}Upload Riga Workbook{% endblock %}
+{% block subtitle %}Upload Riga Workbook{% endblock %}
+
+{% block head %}
+<style>
+    .page-head { margin-bottom: 18px; }
+    .note {
+        border: 1px solid var(--warn);
+        border-left-width: 6px;
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin: 0 0 16px 0;
+        font-size: 14px;
+    }
+    .note.done { border-color: var(--good); }
+    .upload-form {
+        display: grid;
+        gap: 14px;
+        max-width: 520px;
+        font-size: 14px;
+    }
+    .upload-form label { display: block; font-weight: 600; margin-bottom: 4px; }
+    .upload-form input[type="text"], .upload-form input[type="file"] {
+        width: 100%;
+        background: var(--surface-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-size: 14px;
+    }
+    .upload-form button {
+        justify-self: start;
+        background: var(--accent-2);
+        border: 1px solid var(--accent-2);
+        color: #ffffff;
+        padding: 8px 18px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    .upload-form button:hover { background: var(--accent-hover); }
+    .upload-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .rows-list { margin: 6px 0 0 0; padding-left: 18px; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if error %}
+<div class="note" role="alert" id="upload-error">Not uploaded: {{ error }} The previous workbook is still in use.</div>
+{% endif %}
+{% if message %}
+<div class="note done" role="status" id="upload-done">
+    Uploaded {{ message.original_filename }}: {{ message.rows }} Riga row{{ '' if message.rows == 1 else 's' }} read.
+    <ul class="rows-list">
+        {% for sheet, n in message.rows_per_sheet.items() %}<li>{{ sheet }}: {{ n }}</li>{% endfor %}
+    </ul>
+    <a href="/?site=riga">Open the Riga view</a>
+</div>
+{% endif %}
+{% if off_reason %}
+<div class="note" role="alert">The folder for the Riga workbook could not be created when the dashboard started, so uploads cannot be saved until the dashboard is restarted. The reason is in the dashboard log.</div>
+{% endif %}
+
+<div class="card">
+    <h2 class="card-title">Current workbook</h2>
+    <p class="card-sub" id="current-upload">
+        {% if upload %}Uploaded by {{ upload.uploaded_by }} on {{ upload.uploaded_at | mdy_time }}{% if upload.original_filename %}, from {{ upload.original_filename }}{% endif %}, in Riga's time zone.
+        {% else %}No Riga workbook has been uploaded yet.{% endif %}
+    </p>
+</div>
+
+<div class="card">
+    <h2 class="card-title">Upload a new workbook</h2>
+    <p class="card-sub">The Riga fleet workbook, as an Excel .xlsx file of at most {{ limit }}. It is checked before it replaces the current one, and the current one is kept as a dated backup. Anyone who can open this dashboard can upload here.</p>
+    <form class="upload-form" method="post" action="/riga/upload" enctype="multipart/form-data">
+        <div>
+            <label for="workbook">Workbook (.xlsx)</label>
+            <input type="file" id="workbook" name="workbook" accept=".xlsx" required>
+        </div>
+        <div>
+            <label for="name">Your name</label>
+            <input type="text" id="name" name="name" maxlength="{{ max_name }}" required autocomplete="name">
+        </div>
+        <button type="submit"{% if off_reason %} disabled{% endif %}>Submit</button>
+    </form>
+    <p class="card-sub" style="margin: 14px 0 0 0;"><a href="/?site=riga">Back to the Riga view</a></p>
+</div>
+{% endblock %}
