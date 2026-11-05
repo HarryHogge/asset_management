@@ -251,6 +251,16 @@ that day. A CSV export is recorded as it is.
   the Riga workbook each day (Riga's calendar day), whenever the overview is
   opened for either site. With no workbook uploaded there is no Riga line.
   The trend shows the chosen site's lines.
+- **The dashboard also records each day on its own.** A timer inside the
+  dashboard loads the US list and the Riga workbook every 15 minutes, and
+  writes the day's lines if they are not there yet, so the chart fills in
+  even when nobody opens it. Page loads still record as before. It runs
+  every 15 minutes rather than once a day because the first SharePoint read
+  of a day usually returns the copy from the day before, which is not
+  recorded; a later pass that day gets the fresh copy. The startup banner
+  says the timer is on, and the log has one line each time the timer itself
+  writes a site's line. A day can still be missed if the dashboard was not
+  running at all that day.
 
 ## Riga
 

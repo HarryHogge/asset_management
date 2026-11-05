@@ -5,6 +5,8 @@ from zoneinfo import ZoneInfo
 import io
 import logging
 import os
+import threading
+import time
 
 import assets as asset_data
 import fleet
@@ -177,7 +179,9 @@ def load_riga():
             _riga_logged['mismatches'] = key
             for m in key:
                 log.warning('Riga workbook: %s', riga_loader.mismatch_text(m))
-        HISTORY.record(state['data'], None, riga_now(), site=fleet.RIGA, mapping=use)
+        # 'recorded' tells the readiness timer whether this call wrote the line.
+        state['recorded'] = HISTORY.record(state['data'], None, riga_now(), site=fleet.RIGA,
+                                           mapping=use)
     return state
 
 
@@ -200,6 +204,85 @@ def load():
     # history. It never raises: a failed write is logged and noted on /overview.
     HISTORY.record(data, FAMILIES, datetime.now(ZoneInfo(SITE_TIMEZONE)))
     return data
+
+
+# ---------------------------------------------------------------------------
+# The readiness timer: records each day even when nobody opens a page
+# ---------------------------------------------------------------------------
+
+# Every 15 minutes, not once a day: the first SharePoint call of a day usually
+# gets yesterday's copy (worth_recording turns it down) and starts a refresh,
+# so today's copy is recorded by a later pass within the same hour.
+TIMER_SECONDS = 15 * 60
+# The first pass comes a minute after startup, so a restart late in the day
+# still records that day.
+TIMER_FIRST_SECONDS = 60
+TIMER_THREAD_NAME = 'readiness-timer'
+
+# The cause each site's part of a pass last failed with, so each is logged once.
+_timer_problems = {fleet.US: None, fleet.RIGA: None}
+
+
+def _timer_problem(site, problem):
+    """Log a failure once, again only when its cause changes, and one line
+    when it works again: the same pattern as ReadinessHistory._set_problem."""
+    before = _timer_problems[site]
+    if problem != before:
+        if problem:
+            log.error('Readiness timer: the %s line could not be recorded: %s', site, problem)
+        else:
+            log.info('Readiness timer: recording the %s line works again.', site)
+    _timer_problems[site] = problem
+
+
+def readiness_pass(now=None):
+    """One pass of the timer: load the US list and record today's US line,
+    then load the Riga workbook, which records Riga's line itself. Returns the
+    sites it wrote a line for. Never raises. Does nothing when history is off
+    or the US source has a settings problem: startup has already logged why.
+    `now` is the US site time, for tests; Riga keeps its own clock."""
+    written = []
+    if HISTORY.off_reason:
+        return written
+    if not isinstance(SOURCE, UnavailableSource):
+        try:
+            now = now or datetime.now(ZoneInfo(SITE_TIMEZONE))
+            data = SOURCE.load()
+            if HISTORY.record(data, FAMILIES, now):
+                written.append(fleet.US)
+                log.info('Readiness timer: recorded the US line for %s.', now.date().isoformat())
+            _timer_problem(fleet.US, None)
+        except Exception as e:
+            _timer_problem(fleet.US, '%s: %s' % (type(e).__name__, e))
+    try:
+        riga = load_riga()
+        if riga.get('recorded'):
+            written.append(fleet.RIGA)
+            log.info('Readiness timer: recorded the Riga line for %s.',
+                     riga_now().date().isoformat())
+        _timer_problem(fleet.RIGA, None)
+    except Exception as e:  # load_riga never raises; this is a guard all the same
+        _timer_problem(fleet.RIGA, '%s: %s' % (type(e).__name__, e))
+    return written
+
+
+def _timer_loop(first=TIMER_FIRST_SECONDS, every=TIMER_SECONDS, sleep=time.sleep):
+    sleep(first)
+    while True:
+        try:
+            readiness_pass()
+        except Exception:  # never let the thread die
+            log.exception('Readiness timer: unexpected error in a pass; trying again in %d minutes.',
+                          every // 60)
+        sleep(every)
+
+
+def start_readiness_timer():
+    """Start the timer thread. Called only from __main__, never at import, so
+    tests and anything else that imports this module get no thread."""
+    thread = threading.Thread(target=_timer_loop, name=TIMER_THREAD_NAME, daemon=True)
+    thread.start()
+    return thread
 
 
 @app.errorhandler(503)
@@ -517,10 +600,13 @@ if __name__ == '__main__':
         print(f"Readiness history: OFF until restart, because {HISTORY.off_reason}")
     else:
         print(f"Readiness history: {HISTORY.path}")
+        print(f"Readiness history: recorded by a timer every {TIMER_SECONDS // 60} minutes, "
+              "as well as on page loads.")
     if RIGA.off_reason:
         print(f"Riga workbook: OFF until restart, because {RIGA.off_reason}")
     else:
         print(f"Riga workbook: {RIGA.path}")
     print("=" * 60)
     print(f"\nOpen http://localhost:{PORT} in your browser\n")
+    start_readiness_timer()
     serve(app, host='0.0.0.0', port=PORT)

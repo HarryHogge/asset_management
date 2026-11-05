@@ -638,3 +638,119 @@ git pull
 - `pm2 logs asset-management --lines 50 --nostream`;
 - the output of the check command from F7 step 4, if you got that far;
 - what the page showed, including any note or error text.
+
+## Part G: Daily readiness timer (prompt 13)
+
+Do Parts E and F first; Part G assumes they are done.
+
+What changes:
+- **The dashboard records each day on its own.** A timer inside it loads the US list and the Riga workbook every 15 minutes and writes the day's history lines if they are not there yet. The Readiness Trend then fills in even on days nobody opens the dashboard.
+- **Page loads still record as before.** The timer is an addition.
+- **Nothing to set up.** No new setting, no new package, no Task Scheduler job.
+- **SharePoint stays read only.** With nobody using the dashboard, the timer adds about one list read every 15 minutes.
+
+A day is still missed if the dashboard is not running at all that day.
+
+### G1. Note the current commit
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git rev-parse --short HEAD
+```
+
+It prints a short code such as `92841c6`. **Write it down.** It is the commit G4 goes back to.
+
+### G2. Pull the new code and restart
+
+```powershell
+git pull
+git log --oneline -1
+pm2 restart asset-management
+```
+
+`git log` should show `Prompt 13: daily readiness timer` or something newer. There are no new packages, so `pip install` is not needed.
+
+### G3. Check it
+
+**1. The new startup line.**
+
+```powershell
+pm2 logs asset-management --lines 40 --nostream
+```
+
+Expect these two lines, one after the other:
+
+```
+Readiness history: C:\Users\slovett\apps\asset_data\readiness_history.jsonl
+Readiness history: recorded by a timer every 15 minutes, as well as on page loads.
+```
+
+If the first line says `Readiness history: OFF until restart, because ...`, the second line is not printed and the timer records nothing. Fix that as in Part E first.
+
+**2. Today's line, within about 2 minutes.** Do not open the dashboard for this check. Wait 2 minutes after the restart (the timer's first pass is 1 minute after startup), then:
+
+```powershell
+Get-Date -Format yyyy-MM-dd
+Get-Content C:\Users\slovett\apps\asset_data\readiness_history.jsonl | Where-Object { $_.Trim() } | ForEach-Object { $e = $_ | ConvertFrom-Json; "$($e.date) $($e.site)" }
+```
+
+The second command lists one line per history entry, date and site, for example `2026-11-05 US` and `2026-11-05 Riga`. Lines from before Part F show the date only; they are US lines.
+
+Expect today's date with `US` at the end of the list, and with `Riga` too if a Riga workbook has been uploaded. Either:
+- **the timer wrote it.** The log then has a line like the one in step 3; or
+- **it was already there,** written by a page view earlier today. The timer then writes nothing and logs nothing. That is also correct.
+
+Two notes on dates:
+- the US date is the site's own day (Pacific time). Late in the evening Pacific time, Riga is already on the next day, so Riga's line can carry the next date;
+- with the SharePoint source, a pass only records a copy fetched that day. Right after the restart the first copy is always fresh, so 2 minutes is enough.
+
+To see what the timer itself logged:
+
+```powershell
+pm2 logs asset-management --lines 200 --nostream | Select-String "Readiness timer"
+```
+
+- `Readiness timer: recorded the US line for <date>.` and `Readiness timer: recorded the Riga line for <date>.` mean the timer wrote that line.
+- `Readiness timer: the US line could not be recorded: ...` gives the cause. It is logged once per cause, not every 15 minutes. When it works again, one line says `Readiness timer: recording the US line works again.`
+- `Readiness timer: unexpected error in a pass; trying again in 15 minutes.` is followed by details. The timer keeps running.
+
+**3. The next morning, before anyone opens the dashboard.**
+
+```powershell
+pm2 logs asset-management --lines 200 --nostream | Select-String "Readiness timer"
+```
+
+Expect a line `Readiness timer: recorded the US line for <today>.` with today's date, logged shortly after midnight Pacific time. With the SharePoint source it can come one pass later (up to about 30 minutes after midnight), because the first read of the new day gets yesterday's copy, which is not recorded. Then run the `Get-Content` command from step 2 again: yesterday and today are both listed, with no page visited first.
+
+If someone opened the dashboard first, the page view wrote the line and the timer logs nothing for that day. That is correct, but it does not prove the timer. Check again on a day nobody opens it early, or look for the timer line on a weekend.
+
+### G4. Roll back, if anything is wrong
+
+Use the commit you wrote down in G1:
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git checkout <commit from G1>
+pm2 restart asset-management
+```
+
+The history file needs nothing. Lines the timer already wrote are the same format as page-load lines, so the older code reads them as before and the trend keeps those days. Days are then recorded only on page loads again.
+
+**Getting back onto the branch.** After a rollback the clone sits on that single commit, not on the branch, so a plain `git pull` will not work. Before the next update, run:
+
+```powershell
+git checkout agent/wednesday
+git pull
+```
+
+### What to paste into the session
+
+After G3, whether it worked or not:
+- the output of `git log --oneline -1` from G2;
+- the two `Readiness history` lines from G3 step 1, or the banner as it is;
+- the output of the `Get-Content` command from G3 step 2, and the date `Get-Date` printed;
+- the `Select-String "Readiness timer"` output from G3 steps 2 and 3.
+
+If you rolled back, also:
+- the output of `git log --oneline -1` from before and after the rollback;
+- `pm2 logs asset-management --lines 50 --nostream`.
