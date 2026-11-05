@@ -16,6 +16,7 @@ Needs Python 3.10 or later.
 | Page | What it shows |
 |---|---|
 | `/` Fleet Overview (home page) | Readiness of the whole fleet and of Aircraft, Ground Control Stations and Payloads, a table per family, the number of assets each data-problem rule affects, and a 7-day readiness trend. A US / Riga switch at the top: `/?site=riga` shows the Riga site (see "Riga"). Filter by Location with `?location=...`. The old address `/overview` redirects here, keeping the site and the filter |
+| `/globe` Global View | A dark 3D globe with a glowing point for each site that has assets, sized by its asset count and coloured by its readiness, and a small list above each point of the Locations there, each with its count and readiness. Clicking a Location opens Fleet Overview filtered to it. Beside it, Unplaced lists assets whose Location has no place yet. See "Global View" |
 | `/riga/upload` | Upload a new Riga fleet workbook. Linked from the Riga view, not from the nav |
 | `/inventory` Inventory | Every asset, with filters, sorting, and Excel export of what's shown |
 | `/attention` | Data problems: OUT with no holder or date, checked out but not OUT, no status, no condition (Material Condition blank), never/overdue inventory, PMC/NMC with no notes |
@@ -261,6 +262,95 @@ that day. A CSV export is recorded as it is.
   says the timer is on, and the log has one line each time the timer itself
   writes a site's line. A day can still be missed if the dashboard was not
   running at all that day.
+
+## Global View
+
+`/globe` shows where the assets are on a 3D globe: the Earth at night, with a
+point at each site that has assets.
+
+- **Each point** grows with the site's asset count, by its square root, so a
+  site with over 100 assets does not swamp a site with 1. Its colour is the
+  site's readiness, with engines left out as on Fleet Overview: green at 80%
+  and above, amber at 50% and above, red below 50%, grey when there is
+  nothing to work out a % from.
+- **Above each point** floats a list: the site, its asset count and
+  readiness, and one line per Location there. Clicking a line opens Fleet
+  Overview filtered to that Location; clicking Riga opens the Riga view. A
+  list is hidden while its point is on the far side of the globe. An asset
+  with two Locations at one site counts once for the site and once on each
+  line.
+- **Close sites.** A site within 40 degrees of arc (about 4,400 km) of a
+  site with more assets shows only its top line, and its list opens when the
+  mouse is over it. San Luis Obispo is 28 degrees from Huntsville, so it
+  shows its top line only. If a list would still cover a bigger site's list
+  on screen, the page lifts it clear, and a thin line joins it to its point.
+- **Unplaced,** beside the globe, lists every asset whose Location is not in
+  `location_sites.json`, is listed there as not a place, or is blank, with a
+  count and a link to Fleet Overview filtered to it. Nothing is left out.
+- **Riga** has one point, from the uploaded workbook, whatever each row's own
+  Location says. With no workbook, or one that cannot be read, there is no
+  Riga point and a one-line note says why. The US points are not affected.
+- **No 3D.** Some PCs and remote desktops cannot draw 3D (WebGL is off). The
+  page then shows the same numbers as a table, with a note saying why.
+- **The globe stays dark** in the light theme; the rest of the page follows
+  the theme. It turns slowly, stops while you drag it, and starts again 4
+  seconds after you let go.
+
+### location_sites.json
+
+This file, next to `app.py`, says where each Location value is. The page
+reads it each time it opens, so an edit shows without a restart. It has:
+
+- `sites`: each with a `name`, a latitude `lat` and longitude `lon` in
+  decimal degrees (north and east positive, south and west negative), and
+  the `locations` found there;
+- `riga`: Riga's `name`, `lat` and `lon`. Riga's assets come from the
+  workbook, so it has no `locations`;
+- `not_places`: Location values that are not a place, such as
+  `Global Support`. Their assets are listed under Unplaced as "not a place".
+
+A Location matches by its text, ignoring capitals and spaces at the ends.
+A Location may be in only one site, or in `not_places`. If the file cannot
+be read, or a Location is in two places, the page says so in a note naming
+the problem, the log says it once, and every asset is listed under
+Unplaced until the file is fixed.
+
+**To add a Location to a site that is already there:** open the file in
+Notepad and add the Location's text, in double quotes, to that site's
+`locations` list, with a comma between entries. Save and reload the page.
+
+**To add a new site:**
+1. Find its latitude and longitude. In Google Maps, right-click the spot. The
+   first line of the menu is two numbers, for example `51.5072, -0.1276`.
+   Click it to copy them. The first is `lat`, the second `lon`.
+2. Open `location_sites.json` in Notepad. After the last site in `sites`,
+   add a comma and a new entry like this one:
+
+   ```json
+   {"name": "London", "lat": 51.51, "lon": -0.13, "locations": ["RDT UK"]}
+   ```
+
+3. Save, and reload the Global View. If the page shows a note about the
+   file, it names what is wrong, often a missing comma or quote.
+
+Two decimal places are plenty: they place a point to within about 1 km.
+
+### Sources and licences
+
+Both are saved in `static/vendor/`, so the page needs no internet.
+
+- **globe.gl 2.46.2** by Vasco Asturiano, MIT licence:
+  `globe.gl-2.46.2.min.js`, with its licence in
+  `globe.gl-2.46.2.LICENSE.txt`. Its single-file build includes three.js
+  (MIT) and the other libraries it uses, whose licence notices are kept in
+  the file. Taken from the npm package
+  (https://www.npmjs.com/package/globe.gl), checked against its published
+  SHA-512.
+- **The Earth image**: NASA Earth Observatory, "Earth at Night (Black
+  Marble) 2016", the 0.1 degree version (3600 by 1800 pixels),
+  `black_marble_2016_3600x1800.jpg`. NASA images are public domain. Source:
+  https://earthobservatory.nasa.gov/features/NightLights (image record
+  144898).
 
 ## Riga
 

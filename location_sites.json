@@ -1,0 +1,10 @@
+{
+  "sites": [
+    {"name": "Huntsville", "lat": 34.73, "lon": -86.59,
+     "locations": ["HSV Flight Ops", "HSV LRR Internal", "HSV ENG", "Gimbal Gauntlet HSV"]},
+    {"name": "San Luis Obispo", "lat": 35.28, "lon": -120.66,
+     "locations": ["SLO ENG", "SLO Flight Ops"]}
+  ],
+  "riga": {"name": "Riga", "lat": 56.95, "lon": 24.11},
+  "not_places": ["Global Support", "No Verified Location"]
+}

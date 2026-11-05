@@ -10,6 +10,7 @@ import time
 
 import assets as asset_data
 import fleet
+import globe
 import riga_loader
 import sharepoint
 
@@ -131,6 +132,7 @@ def make_source(name, env=None):
 
 SOURCE = make_source(os.getenv('ASSET_SOURCE'))
 FAMILIES = fleet.FamilyMap()
+LOCATION_SITES = globe.SiteMap()
 HISTORY = make_history()
 RIGA = make_riga()
 
@@ -141,6 +143,7 @@ app.config['MAX_CONTENT_LENGTH'] = riga_loader.MAX_UPLOAD_BYTES + 1024 * 1024
 
 PAGES = [
     ('overview', '/', 'Fleet Overview'),
+    ('globe', '/globe', 'Global View'),
     ('inventory', '/inventory', 'Inventory'),
     ('attention', '/attention', 'Needs Attention'),
     ('checkouts', '/checkouts', 'Checkouts'),
@@ -418,6 +421,23 @@ def riga_overview(riga):
                   problem_count=problem_count,
                   trend=trend,
                   **common)
+
+
+@app.route('/globe')
+def globe_view():
+    """Where the assets are: a 3D globe with a point per site, and the
+    assets whose Location is not placed listed beside it."""
+    riga = load_riga()
+    data = load()
+    mapping, mapping_problem = FAMILIES.load()
+    sites, sites_problem = LOCATION_SITES.load()
+    numbers = globe.globe_data(data['assets'], mapping, riga, sites)
+    return render('globe.html', 'globe', data,
+                  numbers=numbers,
+                  sites_problem=sites_problem,
+                  mapping_problem=mapping_problem,
+                  good_pct=globe.GOOD_PCT,
+                  warn_pct=globe.WARN_PCT)
 
 
 @app.route('/riga/upload', methods=['GET', 'POST'])

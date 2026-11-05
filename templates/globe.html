@@ -1,0 +1,432 @@
+{% extends 'base.html' %}
+{% block title %}Global View{% endblock %}
+{% block subtitle %}Global View{% endblock %}
+
+{% block head %}
+{# Served locally, like Chart.js, so the page needs no internet: globe.gl
+   (with three.js inside it) and NASA's Black Marble image. #}
+<script src="{{ url_for('static', filename='vendor/globe.gl-2.46.2.min.js') }}"></script>
+<style>
+    .globe-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 300px;
+        gap: 20px;
+        align-items: start;
+    }
+    @media (max-width: 1100px) {
+        .globe-layout { grid-template-columns: minmax(0, 1fr); }
+    }
+    /* The globe stays dark in both themes, with the dark theme's colours. */
+    .globe-wrap {
+        --good: #3fa23f;
+        --warn: #e8a100;
+        --bad: #e5484d;
+        --neutral: #9a9a9a;
+        --glow: #3a7bd5;
+        position: relative;
+        height: 640px;
+        border-radius: 12px;
+        border: 1px solid #2a2a2a;
+        overflow: hidden;
+        color: #ffffff;
+        /* A faint field of stars behind the globe, drawn by the browser. */
+        background:
+            radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,0.8), transparent 60%),
+            radial-gradient(1px 1px at 28% 72%, rgba(255,255,255,0.6), transparent 60%),
+            radial-gradient(1px 1px at 41% 33%, rgba(255,255,255,0.5), transparent 60%),
+            radial-gradient(1px 1px at 57% 88%, rgba(255,255,255,0.7), transparent 60%),
+            radial-gradient(1px 1px at 66% 12%, rgba(255,255,255,0.6), transparent 60%),
+            radial-gradient(1px 1px at 79% 54%, rgba(255,255,255,0.8), transparent 60%),
+            radial-gradient(1px 1px at 91% 27%, rgba(255,255,255,0.5), transparent 60%),
+            radial-gradient(1px 1px at 8% 92%, rgba(255,255,255,0.6), transparent 60%),
+            radial-gradient(1.5px 1.5px at 35% 8%, rgba(160,190,255,0.7), transparent 60%),
+            radial-gradient(1.5px 1.5px at 86% 80%, rgba(160,190,255,0.6), transparent 60%),
+            radial-gradient(1px 1px at 50% 50%, rgba(255,255,255,0.4), transparent 60%),
+            radial-gradient(1px 1px at 20% 45%, rgba(255,255,255,0.5), transparent 60%),
+            radial-gradient(1px 1px at 72% 36%, rgba(255,255,255,0.4), transparent 60%),
+            radial-gradient(1px 1px at 95% 62%, rgba(255,255,255,0.6), transparent 60%),
+            #000000;
+        background-size: 420px 420px, 380px 380px, 300px 300px, 460px 460px, 350px 350px,
+                         410px 410px, 330px 330px, 390px 390px, 520px 520px, 480px 480px,
+                         270px 270px, 440px 440px, 360px 360px, 310px 310px, auto;
+    }
+    #globe { position: absolute; inset: 0; }
+    .globe-hint {
+        position: absolute;
+        left: 14px;
+        bottom: 10px;
+        font-size: 12px;
+        color: #9a9a9a;
+        pointer-events: none;
+    }
+
+    /* The list floating above each point. globe.gl places the anchor, a
+       box of no size, on the point; the list sits above it, lifted further
+       by --lift when it would cover a bigger site's list. */
+    .site-anchor { position: relative; width: 0; height: 0; pointer-events: none; }
+    .site-panel {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        pointer-events: auto;
+        width: max-content;
+        max-width: 260px;
+        transform: translate(-50%, calc(-10px + var(--lift, 0px)));
+        background: rgba(10, 14, 24, 0.78);
+        border: 1px solid rgba(110, 159, 240, 0.45);
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-size: 11px;
+        line-height: 1.35;
+        color: #ffffff;
+        box-shadow: 0 0 12px rgba(58, 123, 213, 0.25);
+        transition: opacity 250ms;
+    }
+    /* A thin line from the list down to its point, as long as the list is lifted. */
+    .site-panel::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 100%;
+        width: 1px;
+        height: calc(10px - var(--lift, 0px));
+        background: rgba(110, 159, 240, 0.55);
+        pointer-events: none;
+    }
+    .site-panel .head {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        justify-content: space-between;
+        font-weight: 600;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+    .site-panel .head .name { overflow: hidden; text-overflow: ellipsis; }
+    .site-panel a { color: inherit; text-decoration: none; }
+    .site-panel a:hover { text-decoration: underline; }
+    .site-panel .line {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 8px;
+        color: #c8c8c8;
+        white-space: nowrap;
+    }
+    .site-panel .line .loc { overflow: hidden; text-overflow: ellipsis; }
+    .site-panel .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .site-panel .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 4px;
+    }
+    .site-panel .lines { margin-top: 3px; }
+    .site-panel.collapsed .lines { display: none; }
+    /* The list under the mouse draws on top; globe.gl sets each anchor's
+       z-index inline, so this needs !important. */
+    .site-anchor:hover, .site-anchor:focus-within { z-index: 100000 !important; }
+    .site-panel.collapsed:hover .lines,
+    .site-panel.collapsed:focus-within .lines { display: block; }
+    .site-panel.collapsed .head::after { content: ' \25BE'; color: #9a9a9a; }
+    .band-good { color: var(--good); }
+    .band-warn { color: var(--warn); }
+    .band-bad { color: var(--bad); }
+
+    /* Unplaced, and the notes */
+    .side-card { margin-bottom: 0; }
+    .unplaced-line {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+    }
+    .unplaced-line:last-child { border-bottom: 0; }
+    .unplaced-line .loc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .unplaced-line .why { font-size: 12px; color: var(--muted); }
+    .unplaced-line .num { text-align: right; font-weight: 600; }
+    .note {
+        border: 1px solid var(--warn);
+        border-left-width: 6px;
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin: 0 0 14px 0;
+        font-size: 14px;
+    }
+    .note.info { border-color: var(--border); border-left-color: var(--series); }
+    #fallback[hidden], #fallback-note[hidden], .globe-wrap[hidden] { display: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if sites_problem %}
+<div class="note" role="alert">The location file (location_sites.json) could not be used, so no site can be placed and every asset is listed under Unplaced: {{ sites_problem }}.</div>
+{% endif %}
+{% if mapping_problem %}
+<div class="note" role="alert">The asset family file (asset_families.json) could not be read, so readiness counts every asset as Unmapped. The reason is in the dashboard log.</div>
+{% endif %}
+{% if numbers.riga_note %}
+<div class="note info" id="riga-note">{{ numbers.riga_note }}{% if numbers.riga_note.startswith('No Riga workbook') %} <a href="/riga/upload">Upload the Riga workbook</a>.{% endif %}</div>
+{% endif %}
+<div class="note" id="fallback-note" role="alert" hidden></div>
+
+<div class="globe-layout">
+    <div>
+        <div class="globe-wrap" id="globe-wrap" hidden>
+            <div id="globe" aria-label="A globe with a point for each site"></div>
+            <div class="globe-hint">Drag to turn the globe. Point colour: readiness, green {{ good_pct }}% and above, amber {{ warn_pct }}% and above, red below.</div>
+        </div>
+
+        {# The same numbers as a table: shown when the globe cannot be drawn. #}
+        <section class="card" id="fallback">
+            <h2 class="card-title">Sites</h2>
+            <p class="card-sub">Readiness leaves engines out, as on Fleet Overview.</p>
+            <div class="table-wrap">
+            <table id="sites-table">
+                <thead><tr><th>Site</th><th>Location</th><th class="num">Assets</th><th class="num">Readiness</th></tr></thead>
+                <tbody>
+                {% for s in numbers.sites %}
+                <tr>
+                    <td class="serial">{% if s.href %}<a href="{{ s.href }}">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %}</td>
+                    <td class="muted">All</td>
+                    <td class="num">{{ s.count }}</td>
+                    <td class="num band-{{ s.band }}">{{ s.pct_text }}</td>
+                </tr>
+                {% for line in s.lines %}
+                <tr>
+                    <td></td>
+                    <td><a href="{{ line.href }}">{{ line.location }}</a></td>
+                    <td class="num">{{ line.count }}</td>
+                    <td class="num band-{{ line.band }}">{{ line.pct_text }}</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr><td colspan="4" class="muted">No site has any assets.</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            </div>
+        </section>
+    </div>
+
+    <aside class="card side-card" id="unplaced">
+        <h2 class="card-title">Unplaced <span class="count-badge{% if not numbers.unplaced %} zero{% endif %}">{{ numbers.unplaced | sum(attribute='count') }}</span></h2>
+        <p class="card-sub">Assets whose Location has no place on the globe. An asset with several Locations is counted on each.</p>
+        {% for line in numbers.unplaced %}
+        <div class="unplaced-line">
+            <div class="loc" title="{{ line.location }}"><a href="{{ line.href }}">{{ line.location }}</a><div class="why">{{ line.reason }}</div></div>
+            <div class="num">{{ line.count }}</div>
+        </div>
+        {% else %}
+        <p class="empty">Every asset is at a site on the globe.</p>
+        {% endfor %}
+    </aside>
+</div>
+<noscript><p class="muted">The globe needs JavaScript; the table above has the same numbers.</p></noscript>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var numbers = {{ numbers | tojson }};
+    var wrap = document.getElementById('globe-wrap');
+    var fallback = document.getElementById('fallback');
+    var note = document.getElementById('fallback-note');
+    var EARTH = {{ url_for('static', filename='vendor/black_marble_2016_3600x1800.jpg') | tojson }};
+
+    function showTable(why) {
+        wrap.hidden = true;
+        fallback.hidden = false;
+        note.textContent = why + ' The same numbers are shown as a table below.';
+        note.hidden = false;
+    }
+
+    function webglWorks() {
+        try {
+            var c = document.createElement('canvas');
+            return !!(window.WebGLRenderingContext &&
+                      (c.getContext('webgl') || c.getContext('experimental-webgl')));
+        } catch (e) { return false; }
+    }
+
+    if (typeof Globe === 'undefined') {
+        showTable('The globe library could not be loaded.');
+        return;
+    }
+    if (!webglWorks()) {
+        showTable('This browser cannot draw the 3D globe (WebGL is turned off or not supported, as on some remote desktops).');
+        return;
+    }
+
+    var colours = getComputedStyle(wrap);
+    function colour(band) {
+        var v = colours.getPropertyValue(band === 'none' ? '--neutral' : '--' + band).trim();
+        return v || '#9a9a9a';
+    }
+    function rgba(hex, alpha) {
+        var n = parseInt(hex.replace('#', ''), 16);
+        return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + alpha + ')';
+    }
+
+    function el(tag, cls, text) {
+        var e = document.createElement(tag);
+        if (cls) { e.className = cls; }
+        if (text !== undefined) { e.textContent = text; }
+        return e;
+    }
+
+    // One floating list per site. Text goes in with textContent, never as HTML.
+    function panel(site) {
+        var box = el('div', 'site-panel' + (site.collapsed ? ' collapsed' : ''));
+        box.tabIndex = 0;
+        var head = el('div', 'head');
+        var name = el(site.href ? 'a' : 'span', 'name', site.name);
+        name.title = site.name;
+        if (site.href) { name.href = site.href; }
+        var dot = el('span', 'dot');
+        dot.style.background = colour(site.band);
+        name.insertBefore(dot, name.firstChild);
+        head.appendChild(name);
+        head.appendChild(el('span', 'num', site.count + ' · ' + site.pct_text));
+        box.appendChild(head);
+        var lines = el('div', 'lines');
+        site.lines.forEach(function (line) {
+            var row = el('a', 'line');
+            row.href = line.href;
+            row.title = line.location + ': ' + line.count + ' assets, readiness ' + line.pct_text;
+            row.appendChild(el('span', 'loc', line.location));
+            row.appendChild(el('span', 'num', String(line.count)));
+            row.appendChild(el('span', 'num band-' + line.band, line.pct_text));
+            lines.appendChild(row);
+        });
+        box.appendChild(lines);
+        var anchor = el('div', 'site-anchor');
+        anchor.appendChild(box);
+        site.panel = box;
+        return anchor;
+    }
+
+    // The angle between two places seen from the Earth's centre, in degrees.
+    function arc(lat1, lon1, lat2, lon2) {
+        var r = Math.PI / 180;
+        var c = Math.sin(lat1 * r) * Math.sin(lat2 * r) +
+                Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.cos((lon1 - lon2) * r);
+        return Math.acos(Math.max(-1, Math.min(1, c))) / r;
+    }
+
+    // Ten times a second: hide each list once its point has gone past the
+    // edge of the globe as seen from the camera, and lift a list that would
+    // cover a bigger site's list (numbers.sites is biggest first) clear of it.
+    function layout() {
+        var pov = world.pointOfView();
+        // The edge of the visible half, a few degrees in so a list hides as
+        // its point reaches the edge, not after.
+        var horizon = Math.acos(1 / (1 + pov.altitude)) / (Math.PI / 180) - 3;
+        var placed = [];
+        numbers.sites.forEach(function (s) {
+            var p = s.panel;
+            if (!p) { return; }
+            var visible = arc(s.lat, s.lon, pov.lat, pov.lng) < horizon;
+            p.style.opacity = visible ? 1 : 0;
+            p.style.pointerEvents = visible ? 'auto' : 'none';
+            if (!visible) { return; }
+            p.style.setProperty('--lift', '0px');
+            var r = p.getBoundingClientRect();
+            var lift = 0;
+            for (var tries = 0; tries < 10; tries++) {
+                var hit = null;
+                placed.forEach(function (q) {
+                    if (r.left < q.right && r.right > q.left &&
+                        r.top - lift < q.bottom && r.bottom - lift > q.top) { hit = q; }
+                });
+                if (!hit) { break; }
+                lift = r.bottom - hit.top + 4;
+            }
+            p.style.setProperty('--lift', (-lift) + 'px');
+            placed.push({left: r.left, right: r.right, top: r.top - lift, bottom: r.bottom - lift});
+        });
+    }
+
+    var size = function (site) { return 0.35 + 0.11 * Math.sqrt(site.count); };
+    var world;
+    try {
+        world = Globe()(document.getElementById('globe'))
+            .backgroundColor('rgba(0,0,0,0)')
+            .globeImageUrl(EARTH)
+            .showAtmosphere(true)
+            .atmosphereColor('#3a7bd5')
+            .atmosphereAltitude(0.13)
+            .pointsData(numbers.sites)
+            .pointLat('lat').pointLng('lon')
+            .pointAltitude(0.012)
+            .pointRadius(size)
+            .pointColor(function (s) { return colour(s.band); })
+            .pointLabel(function () { return ''; })
+            .ringsData(numbers.sites)
+            .ringLat('lat').ringLng('lon')
+            .ringColor(function (s) {
+                var c = colour(s.band);
+                return function (t) { return rgba(c, 0.45 * (1 - t)); };
+            })
+            .ringMaxRadius(function (s) { return size(s) * 3; })
+            .ringPropagationSpeed(0.6)
+            .ringRepeatPeriod(2600)
+            .htmlElementsData(numbers.sites)
+            .htmlLat('lat').htmlLng('lon')
+            .htmlAltitude(0.02)
+            .htmlElement(panel)
+            // layout() below decides what shows; globe.gl's own check hid
+            // lists several seconds after their point passed the edge.
+            .htmlElementVisibilityModifier(function () {});
+    } catch (e) {
+        showTable('The globe could not be drawn (' + e.message + ').');
+        return;
+    }
+    wrap.hidden = false;
+    fallback.hidden = true;
+
+    function fit() {
+        world.width(wrap.clientWidth).height(wrap.clientHeight);
+    }
+    fit();
+    window.addEventListener('resize', fit);
+
+    // Start over the sites, at a distance that shows the whole globe.
+    var first = numbers.sites[0];
+    world.pointOfView({lat: first ? first.lat : 30, lng: first ? first.lon : -40, altitude: 2.3});
+    setInterval(layout, 100);
+
+    // A faint triangle mesh just above the surface, made from the globe's own
+    // sphere and material types (three.js is inside globe.gl, not loaded apart).
+    try {
+        var sphere = null;
+        world.scene().traverse(function (o) {
+            if (!sphere && o.isMesh && o.geometry && o.geometry.type === 'SphereGeometry') { sphere = o; }
+        });
+        if (sphere) {
+            var r = sphere.geometry.parameters.radius;
+            var mat = new sphere.material.constructor({color: 0x3a7bd5, wireframe: true,
+                                                       transparent: true, opacity: 0.07});
+            var mesh = new sphere.constructor(new sphere.geometry.constructor(r * 1.003, 48, 24), mat);
+            sphere.parent.add(mesh);
+        }
+    } catch (e) { /* the mesh is decoration only */ }
+
+    // Slow rotation, stopped while someone drags and started again 4 s later.
+    var controls = world.controls();
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.35;
+    var restart = null;
+    controls.addEventListener('start', function () {
+        controls.autoRotate = false;
+        if (restart) { clearTimeout(restart); }
+    });
+    controls.addEventListener('end', function () {
+        restart = setTimeout(function () { controls.autoRotate = true; }, 4000);
+    });
+})();
+</script>
+{% endblock %}

@@ -507,7 +507,9 @@ def test_old_setting_name_is_ignored_with_a_warning(tmp_path, caplog):
 
 def test_overview_is_first_in_the_nav_at_the_home_page(history):
     assert dashboard.PAGES[0] == ('overview', '/', 'Fleet Overview')
-    assert dashboard.PAGES[1] == ('inventory', '/inventory', 'Inventory')
+    # Prompt 14: the Global View comes right after Fleet Overview, then Inventory.
+    assert dashboard.PAGES[1] == ('globe', '/globe', 'Global View')
+    assert dashboard.PAGES[2] == ('inventory', '/inventory', 'Inventory')
 
 
 def test_overview_numbers_for_the_committed_export(history):

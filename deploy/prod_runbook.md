@@ -3,7 +3,7 @@
 Runs on: PROD (Windows), in PowerShell, as `slovett`.
 App: the asset tracking dashboard, read from a SharePoint CSV export or live from SharePoint. Port 5070. PM2 name `asset-management`.
 
-Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection. Part D switches the live dashboard to SharePoint. Part E applies the Fleet Overview (prompts 06 and 07), which becomes the front page. Part F adds the Riga site to the overview (prompts 11 and 12), with an upload page for the Riga workbook.
+Part A installs the CSV version, which has no secrets. Part C adds the SharePoint certificate and settings and tests the live connection. Part D switches the live dashboard to SharePoint. Part E applies the Fleet Overview (prompts 06 and 07), which becomes the front page. Part F adds the Riga site to the overview (prompts 11 and 12), with an upload page for the Riga workbook. Part G adds a timer that records readiness every day without a page visit (prompt 13). Part H adds the Global View page (prompt 14).
 
 Since prompt 07, `http://localhost:5070/` opens the **Fleet Overview** and Inventory is at `http://localhost:5070/inventory`. Every page has the `Data from ...` line above its content.
 
@@ -750,6 +750,129 @@ After G3, whether it worked or not:
 - the two `Readiness history` lines from G3 step 1, or the banner as it is;
 - the output of the `Get-Content` command from G3 step 2, and the date `Get-Date` printed;
 - the `Select-String "Readiness timer"` output from G3 steps 2 and 3.
+
+If you rolled back, also:
+- the output of `git log --oneline -1` from before and after the rollback;
+- `pm2 logs asset-management --lines 50 --nostream`.
+
+## Part H: Global View (prompt 14)
+
+Do Parts E and F first; Part H assumes they are done. Part G is not needed for it.
+
+What changes for users:
+- **A new page, Global View,** in the side menu after Fleet Overview, at `http://localhost:5070/globe`.
+- **What it shows:** a dark 3D globe with a glowing point for each site that has assets, and above each point a small list of its Locations with counts and readiness.
+- **Unplaced:** beside the globe, a panel lists assets whose Location has no place on the globe yet.
+- **Fleet Overview and the other pages do not change.**
+
+What is new on the server:
+- **`location_sites.json`**, next to `app.py`, says where each Location is. It comes with the code; there is nothing to set in `.env`.
+- **The globe library and the Earth image** are in `static\vendor\` and come with the code, so the page makes no request outside the server.
+- **No new Python packages.**
+
+### H1. Note the current commit
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git rev-parse --short HEAD
+```
+
+It prints a short code such as `786f0bc`. **Write it down.** It is the commit H4 goes back to.
+
+### H2. Pull the new code and restart
+
+```powershell
+git pull
+git log --oneline -1
+pm2 restart asset-management
+```
+
+`git log` should show `Prompt 14: globe view` or something newer.
+
+### H3. Check it
+
+**1. The files came with the pull.**
+
+```powershell
+Get-ChildItem static\vendor | Select-Object Name, Length
+Test-Path location_sites.json
+```
+
+Expect these files, with these sizes in bytes:
+- `black_marble_2016_3600x1800.jpg`: 779638;
+- `globe.gl-2.46.2.LICENSE.txt`: 1072;
+- `globe.gl-2.46.2.min.js`: 1885160;
+- `chart-4.4.1.umd.js`, as before.
+
+`Test-Path` should print `True`.
+
+**2. The page, from a normal user PC.** On your own computer, not PROD, open port 5070 on the same server name as in A8, at the address `/globe`, for example `http://<server name>:5070/globe`. Expect:
+- **Global View** in the side menu, after Fleet Overview, highlighted;
+- the `Data from ...` line above the page, as on the other pages;
+- a dark globe showing the Earth at night (city lights on dark land and oceans), with a thin blue glow around its edge. It turns slowly; drag it to turn it yourself, and it starts turning again about 4 seconds after you let go.
+
+**3. The points.**
+- **Huntsville and San Luis Obispo** each have a glowing point, with a small dark panel above it. San Luis Obispo is close enough to Huntsville that its panel shows only its top line, with a small arrow; move the mouse over it to see its Locations. When the two would overlap on screen, the San Luis Obispo panel is lifted above Huntsville's, with a thin line down to its point. With the committed CSV export:
+  - Huntsville: 113 assets, 80%, with HSV Flight Ops 74, HSV LRR Internal 19, Gimbal Gauntlet HSV 10 and HSV ENG 10;
+  - San Luis Obispo: 20 assets, 100%, with SLO ENG 14 and SLO Flight Ops 6.
+
+  With SharePoint, the numbers are whatever the list says today.
+- **Riga** has a point in Latvia if a Riga workbook has been uploaded. Without one, a note above the globe says why there is no Riga point.
+- **A panel hides** when its point turns to the far side of the globe.
+- **Clicking a Location line** opens Fleet Overview filtered to that Location. Clicking Riga opens the Riga view.
+
+**4. The Unplaced panel.** It lists every asset Location with no point. With the committed CSV export:
+- Global Support 3 and No Verified Location 2, each marked "not a place";
+- Anduril, CACI, LRLE, RDT UK and Secret Service, 1 each, marked "not in location_sites.json yet";
+- (blank) 4, marked "no Location".
+
+Each line links to Fleet Overview filtered to it. With SharePoint, new Location values also appear here until they are added to `location_sites.json`.
+
+**5. No request leaves the server.**
+1. On the same user PC, in Edge or Chrome, press **F12** to open the developer tools.
+2. Open the **Network** tab, then reload the page with **Ctrl+F5**.
+3. Click the **Domain** column header to sort by it, or type `-domain:<server name>` in the filter box.
+
+Every request should go to the dashboard's own server name. Expect no requests to any other domain: no CDN, no map tiles, no fonts.
+
+**6. Only if you use a remote desktop to reach PROD or a user PC:** open the Global View inside the remote session too. Either the globe draws, or a note says `This browser cannot draw the 3D globe (WebGL is turned off or not supported, as on some remote desktops). The same numbers are shown as a table below.`, with a table of the same numbers. Both are correct. Note which one you saw.
+
+**7. The log.**
+
+```powershell
+pm2 logs asset-management --lines 100 --nostream | Select-String "Location sites"
+```
+
+Expect `Location sites: 2 site(s) read from location_sites.json.` A line starting `Location sites: every asset shows as Unplaced on the Global View, because` names a problem with the file. The page shows the same problem in a note.
+
+### H4. Roll back, if anything is wrong
+
+Use the commit you wrote down in H1:
+
+```powershell
+cd C:\Users\slovett\apps\asset_management
+git checkout <commit from H1>
+pm2 restart asset-management
+```
+
+The Global View page and its menu entry are then gone, and every other page is as before. Nothing in `.env`, the history file or the Riga folder changed, so nothing else needs putting back.
+
+**Getting back onto the branch.** After a rollback the clone sits on that single commit, not on the branch, so a plain `git pull` will not work. Before the next update, run:
+
+```powershell
+git checkout agent/wednesday
+git pull
+```
+
+### What to paste into the session
+
+After H3, whether it worked or not:
+- the output of `git log --oneline -1` from H2;
+- the `Get-ChildItem` and `Test-Path` output from H3 step 1;
+- what the globe showed: the points, each panel's numbers, and the Unplaced list, or a screenshot;
+- any request to another domain from H3 step 5;
+- from a remote desktop, whether the globe or the table showed;
+- the `Select-String "Location sites"` output from H3 step 7.
 
 If you rolled back, also:
 - the output of `git log --oneline -1` from before and after the rollback;
